@@ -1,0 +1,63 @@
+# ==============================================
+# Git Ignore Configuration for SpeedPulse
+# Protects secrets, build outputs, and node_modules
+# ==============================================
+
+# Dependencies
+node_modules/
+worker/node_modules/
+.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# Next.js Production Build Outputs
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+
+# Cloudflare Wrangler Build Cache & State
+.wrangler/
+worker/.wrangler/
+
+# Environment & Secret Files (DO NOT PUSH TO GITHUB)
+.env
+.env.local
+.env.development
+.env.development.local
+.env.test
+.env.test.local
+.env.production
+.env.production.local
+
+# Allow Tracking for Environment Examples
+!.env.example
+!.env.local.example
+!.env.production.example
+
+# Debug Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+*.log
+
+# OS Metadata & Temp Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE & Editor Configs
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

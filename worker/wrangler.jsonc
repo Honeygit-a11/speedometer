@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "speedtest-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-03-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "ALLOWED_ORIGINS": "*"
+  },
+  "env": {
+    "production": {
+      "name": "speedtest-worker-prod",
+      "vars": {
+        "ALLOWED_ORIGINS": "https://speedpulse.yourdomain.com,https://yourdomain.com"
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "speedtest-worker",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker backend infrastructure for Internet Speed Test",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "deploy": "wrangler deploy",
+    "test:endpoints": "node scripts/test-endpoints.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250224.0",
+    "typescript": "^5.8.2",
+    "wrangler": "^3.111.0"
+  }
+}
