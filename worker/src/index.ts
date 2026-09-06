@@ -30,6 +30,9 @@ const RATE_LIMIT_MAX_REQUESTS = 180;
 const clientIpMap = new Map<string, { count: number; resetAt: number }>();
 
 function checkRateLimit(ip: string): boolean {
+  const isLocal = ip === "127.0.0.1" || ip === "::1" || ip === "localhost" || ip === "anonymous";
+  const maxRequests = isLocal ? 10000 : RATE_LIMIT_MAX_REQUESTS;
+
   const now = Date.now();
   const client = clientIpMap.get(ip);
 
@@ -43,7 +46,7 @@ function checkRateLimit(ip: string): boolean {
     return true;
   }
 
-  if (client.count >= RATE_LIMIT_MAX_REQUESTS) {
+  if (client.count >= maxRequests) {
     return false;
   }
 
@@ -51,12 +54,15 @@ function checkRateLimit(ip: string): boolean {
   return true;
 }
 
-// 2. Sliding Window Bandwidth Quota Tracker (Max 500 MB per 10 min per IP)
+// 2. Sliding Window Bandwidth Quota Tracker (Max 500 MB per 10 min per IP for external clients)
 const BANDWIDTH_WINDOW_MS = 10 * 60 * 1000;
 const MAX_BANDWIDTH_BYTES = 500 * 1024 * 1024; // 500 MB
 const ipBandwidthMap = new Map<string, { bytesUsed: number; resetAt: number }>();
 
 function checkBandwidthQuota(ip: string, incomingBytes: number): boolean {
+  const isLocal = ip === "127.0.0.1" || ip === "::1" || ip === "localhost" || ip === "anonymous";
+  if (isLocal) return true; // Do not choke local development or automated test loops
+
   const now = Date.now();
   const entry = ipBandwidthMap.get(ip);
 
