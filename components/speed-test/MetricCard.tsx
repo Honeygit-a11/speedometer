@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { motion, type Variants } from "framer-motion";
 import { LucideIcon } from "lucide-react";
 
 interface MetricCardProps {
@@ -11,6 +12,18 @@ interface MetricCardProps {
   colorScheme: "cyan" | "purple" | "emerald" | "amber";
   isActive?: boolean;
 }
+
+const glowColors: Record<string, string> = {
+  cyan: "rgba(6, 182, 212, 0.15)",
+  purple: "rgba(168, 85, 247, 0.15)",
+  emerald: "rgba(16, 185, 129, 0.15)",
+  amber: "rgba(245, 158, 11, 0.15)",
+};
+
+const itemVariants: Variants = {
+  hidden: { opacity: 0, y: 20 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" } },
+};
 
 export const MetricCard: React.FC<MetricCardProps> = ({
   title,
@@ -46,8 +59,11 @@ export const MetricCard: React.FC<MetricCardProps> = ({
   const scheme = colorMap[colorScheme];
 
   return (
-    <div
-      className={`p-4 rounded-2xl glass-panel transition-all duration-300 flex flex-col items-center text-center space-y-1 ${scheme.border} ${
+    <motion.div
+      variants={itemVariants}
+      whileHover={{ y: -3, scale: 1.02, boxShadow: `0 8px 30px ${glowColors[colorScheme]}` }}
+      transition={{ type: "spring", stiffness: 300, damping: 20 }}
+      className={`p-4 rounded-2xl glass-panel flex flex-col items-center text-center space-y-1 ${scheme.border} ${
         isActive ? "ring-1 ring-cyan-500/30 -translate-y-0.5" : ""
       }`}
     >
@@ -65,6 +81,6 @@ export const MetricCard: React.FC<MetricCardProps> = ({
           {unit}
         </span>
       </div>
-    </div>
+    </motion.div>
   );
 };

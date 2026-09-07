@@ -26,6 +26,7 @@ export interface SpeedMetrics {
   elapsedMs: number;
   finalMbps: number;
   loadedLatencyMs?: number;
+  samples?: number[]; // Real post-warmup throughput samples (for honest stability scoring)
 }
 
 export interface LoadedLatency {

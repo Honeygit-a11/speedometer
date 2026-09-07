@@ -175,7 +175,7 @@ export class SpeedTestController {
               currentMbps: metrics.currentMbps,
               bytesTransferred: metrics.bytesTransferred,
               elapsedMs: metrics.elapsedMs,
-              finalMbps: metrics.currentMbps,
+              finalMbps: 0, // populated with the true result once the phase completes
             },
           });
         },
@@ -198,7 +198,7 @@ export class SpeedTestController {
               currentMbps: metrics.currentMbps,
               bytesTransferred: metrics.bytesTransferred,
               elapsedMs: metrics.elapsedMs,
-              finalMbps: metrics.currentMbps,
+              finalMbps: 0, // populated with the true result once the phase completes
             },
           });
         },

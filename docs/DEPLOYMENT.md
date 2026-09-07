@@ -114,11 +114,11 @@ Before opening to public traffic, verify:
 - [x] **Environment Variables**: `NEXT_PUBLIC_SPEEDTEST_WORKER_URL` points to live worker URL with HTTPS.
 - [x] **HTTPS**: Both frontend and worker enforce strict SSL/TLS encryption.
 - [x] **CORS**: `ALLOWED_ORIGINS` permits production frontend domain.
-- [x] **Rate Limiting**: Worker limits requests to 180 req/min per IP.
+- [x] **Rate Limiting**: Worker applies per-route budgets per IP (ping 600/min, download 240/min, upload 6000/min).
 - [x] **Upload Protection**: 50MB payload cap strictly enforced with 413 response.
 - [x] **Zero Storage**: In-flight upload chunks discarded with zero disk or DB writes.
 - [x] **Error Handling**: Graceful recovery on network drops, timeouts, and cancellations.
 - [x] **Mobile Responsiveness**: Verified across mobile, tablet, and desktop viewports.
 - [x] **Browser Testing**: Verified on Chrome, Edge, Firefox, and Safari via Web APIs.
-- [x] **Bandwidth Monitoring**: 500MB sliding-window quota active per client IP.
+- [x] **Bandwidth Monitoring**: 5GB/10min sliding-window quota active per client IP (tune via `MAX_BANDWIDTH_BYTES`).
 - [x] **Security Review**: Nosniff and Frame-Options DENY headers active.

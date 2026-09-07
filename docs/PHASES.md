@@ -110,6 +110,7 @@
 
 ### Acceptance Criteria
 - [x] Advanced metrics accurately calculated from actual network probes
+- [x] Stability & bufferbloat grades derived only from real measurements (no fabricated samples) and omitted when data is insufficient
 - [x] 12/12 automated test assertions passed
 - [x] Expandable diagnostics UI functions cleanly without cluttering primary view
 
@@ -118,8 +119,8 @@
 ## Phase 6: Security and Abuse Protection (Completed)
 
 ### Objectives
-- [x] Per-IP sliding-window rate limiting (180 requests/min, `Retry-After: 60`)
-- [x] Per-IP sliding-window bandwidth quota management (500MB per 10min)
+- [x] Per-IP sliding-window rate limiting with per-route budgets (ping 600/min, download 240/min, upload 6000/min, `Retry-After: 60`)
+- [x] Per-IP sliding-window bandwidth quota management (5GB per 10min default, `MAX_BANDWIDTH_BYTES` env-configurable)
 - [x] Method validation rejecting illegal verbs (`DELETE`, `PUT`, `PATCH`) with `405 Method Not Allowed`
 - [x] Hard upload payload bounds (enforcing 50MB ceiling with `413 Payload Too Large`)
 - [x] Production CORS allowlist with localhost development fallback

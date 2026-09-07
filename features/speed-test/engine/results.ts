@@ -14,26 +14,26 @@ export interface AggregateInput {
  */
 export function aggregateResults(input: AggregateInput): TestResults {
   const idleMs = input.ping.avgPing > 0 ? input.ping.avgPing : input.ping.currentPing;
-  const downloadLoadedMs = input.download.loadedLatencyMs ?? Math.round(idleMs + 2);
-  const uploadLoadedMs = input.upload.loadedLatencyMs ?? Math.round(idleMs + 4);
 
-  const loadedLatency = calculateBufferbloatGrade(idleMs, downloadLoadedMs, uploadLoadedMs);
+  // Loaded latency is only reported from real concurrent probes; never fabricated.
+  const downloadLoadedMs = input.download.loadedLatencyMs;
+  const uploadLoadedMs = input.upload.loadedLatencyMs;
+  const hasLoadedLatencyProbe = downloadLoadedMs !== undefined || uploadLoadedMs !== undefined;
+  const loadedLatency = hasLoadedLatencyProbe
+    ? calculateBufferbloatGrade(idleMs, downloadLoadedMs ?? idleMs, uploadLoadedMs ?? idleMs)
+    : undefined;
 
-  // Speed samples derived from measured endpoints
-  const speedSamples = [
-    input.download.finalMbps * 0.95,
-    input.download.finalMbps,
-    input.download.finalMbps * 1.05,
-    input.upload.finalMbps * 0.95,
-    input.upload.finalMbps,
-    input.upload.finalMbps * 1.05,
-  ];
-
-  const stability = calculateNetworkStability(
-    speedSamples,
-    input.ping.samples,
-    input.jitter.jitter
-  );
+  // Stability is scored from REAL post-warmup throughput samples within a single
+  // direction. Download and upload run at different magnitudes, so mixing them
+  // would inflate the coefficient of variation. Omitted when data is insufficient.
+  const downloadSamples = input.download.samples ?? [];
+  const uploadSamples = input.upload.samples ?? [];
+  const speedSamples =
+    downloadSamples.length >= 3 ? downloadSamples : uploadSamples.length >= 3 ? uploadSamples : [];
+  const stability =
+    speedSamples.length >= 3 && input.ping.samples.length > 0
+      ? calculateNetworkStability(speedSamples, input.ping.samples, input.jitter.jitter)
+      : undefined;
 
   return {
     downloadSpeed: Number(input.download.finalMbps.toFixed(1)),

@@ -11,6 +11,7 @@
 
 export interface Env {
   ALLOWED_ORIGINS?: string;
+  MAX_BANDWIDTH_BYTES?: string;
 }
 
 const DEFAULT_DOWNLOAD_BYTES = 25 * 1024 * 1024; // 25 MB
@@ -24,20 +25,40 @@ for (let i = 0; i < CHUNK_SIZE; i++) {
   REUSABLE_CHUNK[i] = i % 256;
 }
 
-// 1. Sliding Window Request Rate Limiter (Max 180 req / min per IP)
+// 1. Sliding Window Request Rate Limiter (per-route budgets per IP).
+// Separate buckets mean a measurement endpoint's natural request volume can't
+// starve the others — previously upload (many small chunks) tripped the shared
+// 180 req/min limit and returned 429 mid-test.
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
-const RATE_LIMIT_MAX_REQUESTS = 180;
+const RATE_LIMIT_MAX_REQUESTS = 180; // general / fallback budget
+const RATE_LIMIT_BUDGETS: Record<string, number> = {
+  ping: 600, // latency probes + loaded-latency probes
+  download: 240, // measurement issues few, large chunk requests
+  upload: 6000, // measurement issues many small upload chunks
+  other: RATE_LIMIT_MAX_REQUESTS,
+};
 const clientIpMap = new Map<string, { count: number; resetAt: number }>();
 
-function checkRateLimit(ip: string): boolean {
-  const isLocal = ip === "127.0.0.1" || ip === "::1" || ip === "localhost" || ip === "anonymous";
-  const maxRequests = isLocal ? 10000 : RATE_LIMIT_MAX_REQUESTS;
+function isLocalIp(ip: string): boolean {
+  return ip === "127.0.0.1" || ip === "::1" || ip === "localhost" || ip === "anonymous";
+}
 
+function routeBucket(pathname: string): string {
+  const path = pathname.replace(/\/$/, "");
+  if (path === "/ping" || path === "/api/ping") return "ping";
+  if (path === "/download" || path === "/api/download") return "download";
+  if (path === "/upload" || path === "/api/upload") return "upload";
+  return "other";
+}
+
+function checkRateLimit(ip: string, bucket: string): boolean {
+  const key = `${ip}:${bucket}`;
   const now = Date.now();
-  const client = clientIpMap.get(ip);
+  const client = clientIpMap.get(key);
+  const maxRequests = isLocalIp(ip) ? 10000 : RATE_LIMIT_BUDGETS[bucket] ?? RATE_LIMIT_MAX_REQUESTS;
 
   if (!client || now > client.resetAt) {
-    clientIpMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    clientIpMap.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
     if (clientIpMap.size > 5000) {
       for (const [k, v] of clientIpMap.entries()) {
         if (now > v.resetAt) clientIpMap.delete(k);
@@ -54,32 +75,31 @@ function checkRateLimit(ip: string): boolean {
   return true;
 }
 
-// 2. Sliding Window Bandwidth Quota Tracker (Max 500 MB per 10 min per IP for external clients)
+// 2. Sliding Window Bandwidth Quota Tracker (default 5 GB per 10 min per IP).
+// checkBandwidthQuota is an admission check only — actual consumption is recorded
+// on completion (recordBandwidthUsage), so a test is never charged for bytes it
+// did not transfer. Set MAX_BANDWIDTH_BYTES=0 to disable the quota entirely.
 const BANDWIDTH_WINDOW_MS = 10 * 60 * 1000;
-const MAX_BANDWIDTH_BYTES = 500 * 1024 * 1024; // 500 MB
+const MAX_BANDWIDTH_BYTES = 5 * 1024 * 1024 * 1024; // 5 GB default
 const ipBandwidthMap = new Map<string, { bytesUsed: number; resetAt: number }>();
 
-function checkBandwidthQuota(ip: string, incomingBytes: number): boolean {
-  const isLocal = ip === "127.0.0.1" || ip === "::1" || ip === "localhost" || ip === "anonymous";
-  if (isLocal) return true; // Do not choke local development or automated test loops
+function resolveBandwidthLimit(env: Env): number {
+  const raw = env?.MAX_BANDWIDTH_BYTES;
+  if (raw === undefined || raw === null) return MAX_BANDWIDTH_BYTES;
+  const limit = Number(raw);
+  return Number.isFinite(limit) && limit >= 0 ? Math.floor(limit) : MAX_BANDWIDTH_BYTES;
+}
 
+function checkBandwidthQuota(ip: string, incomingBytes: number, limit: number): boolean {
+  if (isLocalIp(ip) || limit <= 0) return true; // Do not choke local development or automated test loops
   const now = Date.now();
   const entry = ipBandwidthMap.get(ip);
-
-  if (!entry || now > entry.resetAt) {
-    ipBandwidthMap.set(ip, { bytesUsed: incomingBytes, resetAt: now + BANDWIDTH_WINDOW_MS });
-    return true;
-  }
-
-  if (entry.bytesUsed + incomingBytes > MAX_BANDWIDTH_BYTES) {
-    return false;
-  }
-
-  entry.bytesUsed += incomingBytes;
-  return true;
+  const used = entry && now <= entry.resetAt ? entry.bytesUsed : 0;
+  return used + incomingBytes <= limit;
 }
 
 function recordBandwidthUsage(ip: string, bytes: number) {
+  if (bytes <= 0) return;
   const now = Date.now();
   const entry = ipBandwidthMap.get(ip);
   if (entry && now <= entry.resetAt) {
@@ -145,11 +165,12 @@ export default {
       request.headers.get("X-Forwarded-For") ||
       "127.0.0.1";
 
-    // 2. Request Rate Limiting
-    if (!checkRateLimit(clientIp)) {
+    // 2. Request Rate Limiting (per-route budgets)
+    const bucket = routeBucket(url.pathname);
+    if (!checkRateLimit(clientIp, bucket)) {
       return new Response(
         JSON.stringify({
-          error: "Rate limit exceeded. Maximum 180 requests per minute.",
+          error: "Rate limit exceeded for this endpoint. Please slow down.",
           retryAfterSeconds: 60,
         }),
         {
@@ -163,6 +184,7 @@ export default {
       );
     }
 
+    const bandwidthLimit = resolveBandwidthLimit(env);
     const path = url.pathname.replace(/\/$/, "");
 
     // 3. Health Endpoint
@@ -242,8 +264,8 @@ export default {
           ? DEFAULT_DOWNLOAD_BYTES
           : Math.min(requestedBytes, MAX_DOWNLOAD_BYTES);
 
-      // Bandwidth quota check
-      if (!checkBandwidthQuota(clientIp, totalBytes)) {
+      // Bandwidth quota admission check (actual bytes recorded on completion)
+      if (!checkBandwidthQuota(clientIp, totalBytes, bandwidthLimit)) {
         return new Response(
           JSON.stringify({
             error: "Bandwidth quota exceeded for this IP. Please wait 10 minutes.",
@@ -326,6 +348,27 @@ export default {
             headers: {
               ...securityHeaders,
               "Content-Type": "application/json",
+            },
+          }
+        );
+      }
+
+      // Bandwidth quota admission check (actual bytes recorded on completion).
+      // Without a content-length we reserve against the full per-request ceiling.
+      const expectedUploadBytes = contentLengthHeader
+        ? Math.min(parseInt(contentLengthHeader, 10) || uploadLimit, uploadLimit)
+        : uploadLimit;
+      if (!checkBandwidthQuota(clientIp, expectedUploadBytes, bandwidthLimit)) {
+        return new Response(
+          JSON.stringify({
+            error: "Bandwidth quota exceeded for this IP. Please wait 10 minutes.",
+          }),
+          {
+            status: 429,
+            headers: {
+              ...securityHeaders,
+              "Content-Type": "application/json",
+              "Retry-After": "600",
             },
           }
         );

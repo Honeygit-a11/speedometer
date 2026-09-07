@@ -5,13 +5,15 @@
   "compatibility_date": "2025-03-01",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
-    "ALLOWED_ORIGINS": "*"
+    "ALLOWED_ORIGINS": "*",
+    "MAX_BANDWIDTH_BYTES": "5368709120"
   },
   "env": {
     "production": {
       "name": "speedtest-worker-prod",
       "vars": {
-        "ALLOWED_ORIGINS": "https://speedpulse.yourdomain.com,https://yourdomain.com"
+        "ALLOWED_ORIGINS": "https://speedpulse.yourdomain.com,https://yourdomain.com",
+        "MAX_BANDWIDTH_BYTES": "5368709120"
       }
     }
   }

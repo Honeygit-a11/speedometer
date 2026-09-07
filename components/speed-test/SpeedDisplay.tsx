@@ -1,8 +1,8 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useRef } from "react";
+import { useMotionValue, useSpring, useTransform } from "framer-motion";
 import { ArrowDown, ArrowUp, Activity } from "lucide-react";
-import { formatSpeed } from "@/lib/utils";
 
 interface SpeedDisplayProps {
   speedMbps: number;
@@ -19,8 +19,25 @@ export const SpeedDisplay: React.FC<SpeedDisplayProps> = ({
   const isUpload = phase === "UPLOAD_TEST";
   const isPing = phase === "PING_TEST";
 
-  const formattedSpeed = formatSpeed(speedMbps);
   const transferredMB = (bytesTransferred / (1024 * 1024)).toFixed(1);
+
+  // Animated counting number via useMotionValue + useSpring
+  const motionVal = useMotionValue(speedMbps);
+  const springVal = useSpring(motionVal, { stiffness: 120, damping: 18, mass: 0.6 });
+  const displayVal = useTransform(springVal, (v) => v.toFixed(1));
+  const refDisplayed = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    motionVal.set(speedMbps);
+  }, [speedMbps, motionVal]);
+
+  // Write the transformed value directly to the DOM for 60fps performance
+  useEffect(() => {
+    const unsub = displayVal.on("change", (v) => {
+      if (refDisplayed.current) refDisplayed.current.textContent = v;
+    });
+    return unsub;
+  }, [displayVal]);
 
   return (
     <div className="flex flex-col items-center justify-center text-center">
@@ -46,18 +63,19 @@ export const SpeedDisplay: React.FC<SpeedDisplayProps> = ({
         )}
       </div>
 
-      {/* Numerical Speed Readout */}
+      {/* Numerical Speed Readout — spring-animated counting number */}
       <div className="flex items-baseline gap-2">
         <span
-          className={`text-5xl sm:text-7xl font-extrabold tracking-tight transition-all duration-75 ${
+          className={`text-5xl sm:text-7xl font-extrabold tracking-tight ${
             isDownload
               ? "text-cyan-400 drop-shadow-[0_0_20px_rgba(6,182,212,0.4)]"
               : isUpload
               ? "text-purple-400 drop-shadow-[0_0_20px_rgba(168,85,247,0.4)]"
               : "text-white"
           }`}
+          ref={refDisplayed}
         >
-          {formattedSpeed}
+          {speedMbps.toFixed(1)}
         </span>
         <span className="text-base sm:text-xl font-bold uppercase tracking-wider text-slate-400">
           Mbps

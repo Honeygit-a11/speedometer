@@ -1,7 +1,6 @@
 import { SpeedMetrics } from "@/types";
 import {
   calculateSpeedMbps,
-  calculateTrimmedMean,
   calculateEMA,
   RollingThroughputTracker,
 } from "./calculations";
@@ -63,8 +62,9 @@ export async function runDownloadTest(options: DownloadTestOptions): Promise<Spe
         const remainingTime = durationMs - (performance.now() - startTime);
         if (remainingTime <= 0) break;
 
-        // Request 15MB chunks to provide steady streaming throughput
-        const chunkSize = 15 * 1024 * 1024;
+        // Request 32MB chunks: large enough to amortize connection/RTT overhead
+        // between sequential requests so fast lines stay saturated.
+        const chunkSize = 32 * 1024 * 1024;
         const res = await fetch(`${downloadUrl}?bytes=${chunkSize}&s=${streamId}&_t=${Date.now()}`, {
           cache: "no-store",
           signal: internalController.signal,
@@ -141,9 +141,12 @@ export async function runDownloadTest(options: DownloadTestOptions): Promise<Spe
         warmupEndTime = now;
       }
 
-      // Smooth the display speed
+      // Smooth the display speed; decay toward 0 during stalls so the gauge
+      // doesn't freeze at a stale high value while the link is idle.
       if (rollingMbps > 0) {
         currentSmoothedMbps = calculateEMA(rollingMbps, currentSmoothedMbps, 0.4);
+      } else {
+        currentSmoothedMbps = calculateEMA(0, currentSmoothedMbps, 0.2);
       }
 
       // Post-warmup sampling and stream scaling
@@ -196,14 +199,12 @@ export async function runDownloadTest(options: DownloadTestOptions): Promise<Spe
   const postWarmupBytes = Math.max(0, totalBytesTransferred - bytesAtWarmupEnd);
   const postWarmupDurationSec = Math.max(0.1, (finalTime - warmupEndTime) / 1000);
 
+  // Final speed = exact ground-truth bytes/duration over the post-warmup window.
+  // No trimmed-mean blend: the trimmed mean drops the slow tail that a sustained
+  // average must include, biasing results upward on variable links.
   const cumulativeThroughput = calculateSpeedMbps(postWarmupBytes, postWarmupDurationSec);
-  const trimmedMeanThroughput = postWarmupMbpsSamples.length > 0
-    ? calculateTrimmedMean(postWarmupMbpsSamples, 0.15)
-    : currentSmoothedMbps;
-
-  // Final speed combines the true physical post-warmup transferred volume with trimmed sample filter
   const finalMbps = cumulativeThroughput > 0
-    ? Number(((cumulativeThroughput * 0.7) + (trimmedMeanThroughput * 0.3)).toFixed(1))
+    ? Number(cumulativeThroughput.toFixed(1))
     : currentSmoothedMbps;
 
   // Compute average loaded latency
@@ -217,5 +218,6 @@ export async function runDownloadTest(options: DownloadTestOptions): Promise<Spe
     elapsedMs: Math.round(performance.now() - startTime),
     finalMbps,
     loadedLatencyMs: avgLoadedLatency,
+    samples: postWarmupMbpsSamples,
   };
 }

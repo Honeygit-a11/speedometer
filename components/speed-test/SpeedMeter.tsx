@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { motion, useSpring, useTransform } from "framer-motion";
 
 interface SpeedMeterProps {
   currentMbps: number;
@@ -9,30 +10,43 @@ interface SpeedMeterProps {
 }
 
 /**
- * High-tech SVG Circular Speedometer Gauge with Neon Glow
+ * High-tech SVG Circular Speedometer Gauge with Neon Glow — Framer Motion spring needle + arc
  */
 export const SpeedMeter: React.FC<SpeedMeterProps> = ({
   currentMbps,
   maxScaleMbps = 500,
   phase = "DOWNLOAD_TEST",
 }) => {
-  // Use logarithmic or progressive scale so low speeds (<50 Mbps) and high speeds (>200 Mbps) both animate visibly
   const normalizedSpeed = Math.min(currentMbps, maxScaleMbps);
   const percentage = Math.min(1, Math.max(0, normalizedSpeed / maxScaleMbps));
 
-  // Gauge geometry: 240-degree arc from 150deg to 390deg (or -210 to 30)
+  // Gauge geometry: 240-degree arc from 150deg to 390deg
   const radius = 100;
   const strokeWidth = 10;
   const circumference = 2 * Math.PI * radius;
   const arcLength = (240 / 360) * circumference;
-  const strokeDashoffset = arcLength - percentage * arcLength;
+  const fullOffset = arcLength; // 0% speed = full offset (arc hidden)
+  const targetOffset = arcLength - percentage * arcLength;
+
+  // Spring-animated stroke-dashoffset for smooth arc fill
+  const springOffset = useSpring(fullOffset, { stiffness: 100, damping: 18, mass: 0.8 });
+  React.useEffect(() => {
+    springOffset.set(targetOffset);
+  }, [targetOffset, springOffset]);
+
+  // Spring-animated needle angle: -120 (0 speed) to +120 (max speed)
+  const springAngle = useSpring(-120, { stiffness: 100, damping: 15, mass: 0.8 });
+  const targetAngle = -120 + percentage * 240;
+  React.useEffect(() => {
+    springAngle.set(targetAngle);
+  }, [targetAngle, springAngle]);
+
+  // Map spring value to arc dashoffset string
+  const arcDashoffset = useTransform(springOffset, (v) => `${v} ${circumference}`);
 
   const isDownload = phase === "DOWNLOAD_TEST";
   const strokeColor = isDownload ? "url(#cyan-emerald-grad)" : "url(#purple-cyan-grad)";
   const glowColor = isDownload ? "rgba(6, 182, 212, 0.4)" : "rgba(168, 85, 247, 0.4)";
-
-  // Needle angle from -120 deg (0 speed) to +120 deg (max speed)
-  const needleAngle = -120 + percentage * 240;
 
   return (
     <div className="relative w-64 h-64 sm:w-72 sm:h-72 flex items-center justify-center select-none">
@@ -66,8 +80,8 @@ export const SpeedMeter: React.FC<SpeedMeterProps> = ({
           transform="rotate(150 120 120)"
         />
 
-        {/* Dynamic Progress Arc */}
-        <circle
+        {/* Dynamic Progress Arc — spring-animated */}
+        <motion.circle
           cx="120"
           cy="120"
           r={radius}
@@ -75,11 +89,9 @@ export const SpeedMeter: React.FC<SpeedMeterProps> = ({
           stroke={strokeColor}
           strokeWidth={strokeWidth}
           strokeLinecap="round"
-          strokeDasharray={`${arcLength} ${circumference}`}
-          strokeDashoffset={strokeDashoffset}
+          strokeDasharray={arcDashoffset}
           filter="url(#gauge-glow)"
           transform="rotate(150 120 120)"
-          className="transition-all duration-150 ease-out"
         />
 
         {/* Decorative Inner Ring */}
@@ -103,13 +115,13 @@ export const SpeedMeter: React.FC<SpeedMeterProps> = ({
         <span className="absolute bottom-6 right-12 text-[10px] font-bold text-slate-500">500+</span>
       </div>
 
-      {/* Center Pivot & Needle Pulse */}
-      <div
-        className="absolute w-full h-full pointer-events-none flex items-center justify-center transition-transform duration-150 ease-out"
-        style={{ transform: `rotate(${needleAngle}deg)` }}
+      {/* Center Pivot & Needle — spring-animated rotation */}
+      <motion.div
+        className="absolute w-full h-full pointer-events-none flex items-center justify-center"
+        style={{ rotate: springAngle }}
       >
         <div
-          className="w-1 h-20 rounded-full mb-20 origin-bottom transition-all duration-150"
+          className="w-1 h-20 rounded-full mb-20 origin-bottom"
           style={{
             background: isDownload
               ? "linear-gradient(to top, #06b6d4, #10b981)"
@@ -117,7 +129,7 @@ export const SpeedMeter: React.FC<SpeedMeterProps> = ({
             boxShadow: `0 0 12px ${glowColor}`,
           }}
         />
-      </div>
+      </motion.div>
 
       {/* Center Pivot Point */}
       <div className="absolute w-4 h-4 rounded-full bg-slate-900 border-2 border-cyan-400 shadow-md shadow-cyan-500/50" />

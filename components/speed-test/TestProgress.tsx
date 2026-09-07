@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { motion } from "framer-motion";
 import { Activity, ArrowDown, ArrowUp, Check, Award } from "lucide-react";
 import { TestPhase } from "@/types";
 
@@ -44,18 +45,45 @@ export const TestProgress: React.FC<TestProgressProps> = ({ phase }) => {
     },
   ];
 
+  // Compute how far the fill line should extend (0 → 1 across the gap width)
+  const completedCount = steps.filter((s) => s.isCompleted).length;
+  const activeCount = steps.findIndex((s) => s.isActive);
+  // Fill = fully completed steps + partial fill toward the active one
+  const fillProgress = completedCount > 0
+    ? (completedCount - (activeCount >= 0 && steps[activeCount].isActive && !steps[activeCount].isCompleted ? 0.5 : 0)) / (steps.length - 1)
+    : 0;
+
   return (
     <div className="w-full max-w-xl mx-auto py-2">
       <div className="flex items-center justify-between relative">
         {/* Connecting Line Track */}
         <div className="absolute top-1/2 left-4 right-4 h-0.5 bg-slate-800 -translate-y-1/2 -z-0" />
 
+        {/* Animated Fill Line */}
+        <motion.div
+          className="absolute top-1/2 left-4 h-0.5 -translate-y-1/2 -z-0 origin-left"
+          style={{
+            background: "linear-gradient(90deg, #10b981, #06b6d4, #c084fc)",
+          }}
+          initial={{ width: "0%" }}
+          animate={{ width: `${fillProgress * 100}%` }}
+          transition={{ type: "spring", stiffness: 80, damping: 20, mass: 0.8 }}
+        />
+
         {steps.map((step) => {
           const Icon = step.icon;
 
           return (
             <div key={step.id} className="relative z-10 flex flex-col items-center gap-1.5">
-              <div
+              <motion.div
+                initial={false}
+                animate={
+                  step.isCompleted
+                    ? { scale: [1, 1.2, 1], transition: { duration: 0.3 } }
+                    : step.isActive
+                    ? { scale: [1, 1.08, 1], transition: { repeat: Infinity, duration: 2, ease: "easeInOut" } }
+                    : { scale: 1 }
+                }
                 className={`w-9 h-9 rounded-full flex items-center justify-center transition-all duration-300 ${
                   step.isCompleted
                     ? "bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/30"
@@ -69,7 +97,7 @@ export const TestProgress: React.FC<TestProgressProps> = ({ phase }) => {
                 ) : (
                   <Icon className={`w-4 h-4 ${step.isActive ? "animate-pulse" : ""}`} />
                 )}
-              </div>
+              </motion.div>
               <span
                 className={`text-[11px] font-semibold tracking-wide uppercase transition-colors ${
                   step.isActive
