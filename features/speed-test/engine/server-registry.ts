@@ -33,7 +33,11 @@ export interface ServerSelectionResult {
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
-  return baseUrl.replace(/\/+$/, "");
+  let url = baseUrl.trim().replace(/\/+$/, "");
+  if (!/^https?:\/\//i.test(url)) {
+    url = `https://${url}`;
+  }
+  return url;
 }
 
 function normalizeServer(input: Partial<SpeedTestServer>): SpeedTestServer | null {
