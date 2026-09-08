@@ -1,184 +1,295 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { motion, useSpring, useTransform } from "framer-motion";
+import React, { useEffect, useRef } from "react";
+import { motion, useMotionValue, useSpring, useTransform } from "framer-motion";
+import { ArrowDown, ArrowUp } from "lucide-react";
 
 interface SpeedMeterProps {
   currentMbps: number;
   phase?: "DOWNLOAD_TEST" | "UPLOAD_TEST" | string;
+  bytesTransferred?: number;
 }
 
 /**
- * Dynamic meter scale tiers. The meter starts small and expands only when the
- * live speed approaches the current maximum, so it stays accurate on both slow
- * and very fast connections without constantly rescaling during small jitter.
+ * Non-linear scale matching Ookla Speedtest gauge:
+ *  0 -> 5 -> 10 -> 50 -> 100 (top center / 12 o'clock) -> 250 -> 500 -> 750 -> 1000
+ * Symmetrical 270-degree arc from -135° to +135°
  */
-const SCALE_TIERS = [50, 100, 250, 500, 1000, 2000];
+const SCALE_POINTS = [
+  { speed: 0, angle: -135, label: "0" },
+  { speed: 5, angle: -105, label: "5" },
+  { speed: 10, angle: -75, label: "10" },
+  { speed: 50, angle: -37.5, label: "50" },
+  { speed: 100, angle: 0, label: "100" },
+  { speed: 250, angle: 37.5, label: "250" },
+  { speed: 500, angle: 75, label: "500" },
+  { speed: 750, angle: 105, label: "750" },
+  { speed: 1000, angle: 135, label: "1000" },
+];
 
-const INITIAL_MAX = 100;
+function speedToAngle(speed: number): number {
+  if (speed <= 0) return -135;
+  if (speed >= 1000) return 135;
 
-function resolveMaxScale(currentMbps: number, currentMax: number): number {
-  // Expand when speed nears 85% of the current range. Never shrink mid-phase,
-  // so normal fluctuations don't cause the scale to thrash.
-  if (currentMbps >= currentMax * 0.85) {
-    const next = SCALE_TIERS.find((t) => t > currentMax);
-    if (next) return next;
+  for (let i = 0; i < SCALE_POINTS.length - 1; i++) {
+    const p0 = SCALE_POINTS[i];
+    const p1 = SCALE_POINTS[i + 1];
+    if (speed >= p0.speed && speed <= p1.speed) {
+      const ratio = (speed - p0.speed) / (p1.speed - p0.speed);
+      return p0.angle + ratio * (p1.angle - p0.angle);
+    }
   }
-  return currentMax;
+  return 135;
 }
 
-function formatTick(value: number): string {
-  if (value >= 1000) return `${Math.round(value / 1000)}G`;
-  return `${Math.round(value / 10) * 10}`;
-}
-
-/**
- * High-tech SVG Circular Speedometer Gauge with dynamic scale and a live, real-
- * data-driven needle. The needle follows `currentMbps` (fed straight from the
- * measurement engine); only the animation is spring-smoothed — the value itself
- * is never modified.
- */
 export const SpeedMeter: React.FC<SpeedMeterProps> = ({
   currentMbps,
   phase = "DOWNLOAD_TEST",
+  bytesTransferred = 0,
 }) => {
-  const [maxScale, setMaxScale] = useState(INITIAL_MAX);
+  const isUpload = phase === "UPLOAD_TEST";
 
-  // Expand the meter range only when the live speed justifies it.
-  useEffect(() => {
-    setMaxScale((cur) => resolveMaxScale(currentMbps, cur));
-  }, [currentMbps, maxScale]);
+  // Target angle based on speed
+  const targetAngle = speedToAngle(currentMbps);
 
-  const normalizedSpeed = Math.min(currentMbps, maxScale);
-  const percentage = Math.min(1, Math.max(0, normalizedSpeed / maxScale));
+  // Normalized progress from 0 (at -135°) to 1 (at +135°)
+  const targetProgress = Math.max(0, Math.min(1, (targetAngle - (-135)) / 270));
 
-  // Gauge geometry: 240-degree arc from 150deg to 390deg.
-  const radius = 100;
-  const strokeWidth = 10;
-  const circumference = 2 * Math.PI * radius;
-  const arcLength = (240 / 360) * circumference;
-  const fullOffset = arcLength;
-  const targetOffset = arcLength - percentage * arcLength;
+  // Spring-animated needle angle
+  const springAngle = useSpring(targetAngle, {
+    stiffness: 85,
+    damping: 15,
+    mass: 0.7,
+  });
 
-  // Spring-animated arc fill for smooth motion.
-  const springOffset = useSpring(fullOffset, { stiffness: 100, damping: 18, mass: 0.8 });
-  useEffect(() => {
-    springOffset.set(targetOffset);
-  }, [targetOffset, springOffset]);
-
-  // Spring-animated needle angle: -120 (0 speed) to +120 (max speed).
-  const springAngle = useSpring(-120, { stiffness: 100, damping: 15, mass: 0.8 });
-  const targetAngle = -120 + percentage * 240;
   useEffect(() => {
     springAngle.set(targetAngle);
   }, [targetAngle, springAngle]);
 
-  const arcDashoffset = useTransform(springOffset, (v) => `${v} ${circumference}`);
-
-  const isDownload = phase === "DOWNLOAD_TEST";
-  const strokeColor = isDownload ? "url(#cyan-emerald-grad)" : "url(#purple-cyan-grad)";
-  const glowColor = isDownload ? "rgba(6, 182, 212, 0.4)" : "rgba(168, 85, 247, 0.4)";
-
-  // Dynamic tick labels at 0 / 25% / 50% / 75% / 100% of the current scale,
-  // positioned along the 240-degree arc (angle -120° → +120° from 12 o'clock).
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
-    const angleRad = ((-120 + f * 240) * Math.PI) / 180;
-    // Keep ticks just inside the arc (r ≈ 40% of the container).
-    const x = 50 + Math.sin(angleRad) * 40;
-    const y = 50 - Math.cos(angleRad) * 40;
-    const value = f === 1 ? maxScale : Math.round(maxScale * f);
-    return { f, x, y, label: f === 1 ? `${formatTick(maxScale)}+` : formatTick(value) };
+  // Spring-animated arc progress
+  const motionProgress = useMotionValue(targetProgress);
+  const springProgress = useSpring(motionProgress, {
+    stiffness: 85,
+    damping: 15,
+    mass: 0.7,
   });
 
+  useEffect(() => {
+    motionProgress.set(targetProgress);
+  }, [targetProgress, motionProgress]);
+
+  // Arc geometry constants
+  const cx = 170;
+  const cy = 170;
+  const radius = 126;
+  const strokeWidth = 28;
+  const circumference = 2 * Math.PI * radius; // ≈ 791.68
+  const totalArcLength = (270 / 360) * circumference; // ≈ 593.76
+
+  // SVG dash array for active arc
+  const arcDasharray = useTransform(springProgress, (p) => {
+    const activeLength = Math.max(0.001, Math.min(totalArcLength, p * totalArcLength));
+    return `${activeLength} ${circumference}`;
+  });
+
+  // Animated speed readout counter (formatted to 2 decimal places e.g. 100.55)
+  const motionSpeed = useMotionValue(currentMbps);
+  const springSpeed = useSpring(motionSpeed, {
+    stiffness: 110,
+    damping: 18,
+    mass: 0.6,
+  });
+  const displayVal = useTransform(springSpeed, (v) => v.toFixed(2));
+  const speedTextRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    motionSpeed.set(currentMbps);
+  }, [currentMbps, motionSpeed]);
+
+  useEffect(() => {
+    const unsub = displayVal.on("change", (v) => {
+      if (speedTextRef.current) {
+        speedTextRef.current.textContent = v;
+      }
+    });
+    return unsub;
+  }, [displayVal]);
+
+  // Pre-calculate tick positions (inner radius = 93)
+  const tickRadius = 93;
+  const ticks = SCALE_POINTS.map((pt) => {
+    const rad = (pt.angle * Math.PI) / 180;
+    const x = cx + tickRadius * Math.sin(rad);
+    const y = cy - tickRadius * Math.cos(rad);
+    const isActive = currentMbps >= pt.speed || (pt.speed === 100 && currentMbps >= 95);
+    return { ...pt, x, y, isActive };
+  });
+
+  const transferredMB = (bytesTransferred / (1024 * 1024)).toFixed(1);
+
   return (
-    <div className="relative w-64 h-64 sm:w-72 sm:h-72 flex items-center justify-center select-none">
-      <svg className="w-full h-full transform -rotate-90" viewBox="0 0 240 240">
+    <div className="relative w-80 h-80 sm:w-96 sm:h-96 flex items-center justify-center select-none">
+      {/* Ambient background bloom glow inside gauge */}
+      <div
+        className="absolute inset-4 rounded-full pointer-events-none opacity-80"
+        style={{
+          background:
+            "radial-gradient(circle at 40% 35%, rgba(236, 72, 153, 0.16) 0%, rgba(139, 92, 246, 0.08) 45%, transparent 70%)",
+        }}
+      />
+
+      {/* SVG Speedometer Dial */}
+      <svg
+        className="w-full h-full"
+        viewBox="0 0 340 340"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+      >
         <defs>
-          <linearGradient id="cyan-emerald-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#06b6d4" />
-            <stop offset="100%" stopColor="#10b981" />
+          {/* Vibrant purple to neon pink gradient matching Ookla design */}
+          <linearGradient
+            id="speedmeter-active-gradient"
+            x1="10%"
+            y1="90%"
+            x2="85%"
+            y2="15%"
+          >
+            <stop offset="0%" stopColor="#7c3aed" />
+            <stop offset="25%" stopColor="#9333ea" />
+            <stop offset="55%" stopColor="#d946ef" />
+            <stop offset="78%" stopColor="#ec4899" />
+            <stop offset="100%" stopColor="#ff4cb5" />
           </linearGradient>
-          <linearGradient id="purple-cyan-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#c084fc" />
-            <stop offset="100%" stopColor="#06b6d4" />
-          </linearGradient>
-          <filter id="gauge-glow" x="-20%" y="-20%" width="140%" height="140%">
-            <feGaussianBlur stdDeviation="4" result="blur" />
+
+          {/* Glow filter for active arc */}
+          <filter id="arc-glow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="8" result="blur" />
             <feComposite in="SourceGraphic" in2="blur" operator="over" />
           </filter>
         </defs>
 
-        {/* Background Track Arc */}
+        {/* 1. Inactive Background Track Arc (Deep Slate Navy) */}
         <circle
-          cx={120}
-          cy={120}
+          cx={cx}
+          cy={cy}
           r={radius}
           fill="none"
-          stroke="#1e293b"
+          stroke="#222634"
           strokeWidth={strokeWidth}
-          strokeLinecap="round"
-          strokeDasharray={`${arcLength} ${circumference}`}
+          strokeLinecap="butt"
+          strokeDasharray={`${totalArcLength} ${circumference}`}
           strokeDashoffset={0}
-          transform="rotate(150 120 120)"
+          transform={`rotate(135 ${cx} ${cy})`}
         />
 
-        {/* Dynamic Progress Arc — spring-animated */}
+        {/* 2. Soft Ambient Arc Glow */}
         <motion.circle
-          cx={120}
-          cy={120}
+          cx={cx}
+          cy={cy}
           r={radius}
           fill="none"
-          stroke={strokeColor}
-          strokeWidth={strokeWidth}
-          strokeLinecap="round"
-          strokeDasharray={arcDashoffset}
-          filter="url(#gauge-glow)"
-          transform="rotate(150 120 120)"
+          stroke="url(#speedmeter-active-gradient)"
+          strokeWidth={strokeWidth + 6}
+          strokeLinecap="butt"
+          strokeDasharray={arcDasharray}
+          strokeDashoffset={0}
+          filter="url(#arc-glow)"
+          opacity={0.35}
+          transform={`rotate(135 ${cx} ${cy})`}
         />
 
-        {/* Decorative Inner Ring */}
-        <circle
-          cx={120}
-          cy={120}
-          r={82}
+        {/* 3. Active Progress Arc (Purple to Neon Pink) */}
+        <motion.circle
+          cx={cx}
+          cy={cy}
+          r={radius}
           fill="none"
-          stroke="#0f172a"
-          strokeWidth={1.5}
-          strokeDasharray="4 4"
+          stroke="url(#speedmeter-active-gradient)"
+          strokeWidth={strokeWidth}
+          strokeLinecap="butt"
+          strokeDasharray={arcDasharray}
+          strokeDashoffset={0}
+          transform={`rotate(135 ${cx} ${cy})`}
         />
-      </svg>
 
-      {/* Dynamic Speedometer Tick Marks */}
-      <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+        {/* 4. Scale Numbers (0, 5, 10, 50, 100, 250, 500, 750, 1000) */}
         {ticks.map((t) => (
-          <span
-            key={t.label}
-            className="absolute text-[10px] font-bold text-slate-500 -translate-x-1/2 -translate-y-1/2"
-            style={{ left: `${t.x}%`, top: `${t.y}%` }}
+          <text
+            key={t.speed}
+            x={t.x}
+            y={t.y}
+            textAnchor="middle"
+            dominantBaseline="central"
+            className={`text-[13px] sm:text-[14px] select-none transition-colors duration-200 ${
+              t.isActive
+                ? "fill-white font-bold"
+                : "fill-[#545a6d] font-semibold"
+            }`}
+            style={{
+              fontFamily:
+                "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+            }}
           >
             {t.label}
-          </span>
+          </text>
         ))}
-      </div>
+      </svg>
 
-      {/* Center Pivot & Needle — spring-animated rotation */}
+      {/* 5. Needle — Tapered Wedge with Translucent Gradient */}
       <motion.div
-        className="absolute w-full h-full pointer-events-none flex items-center justify-center"
-        style={{ rotate: springAngle }}
+        className="absolute pointer-events-none flex flex-col items-center"
+        style={{
+          width: 15,
+          height: 82,
+          left: "calc(50% - 7.5px)",
+          top: "calc(50% - 82px)",
+          transformOrigin: "bottom center",
+          rotate: springAngle,
+        }}
       >
         <div
-          className="w-1 h-20 rounded-full mb-20 origin-bottom"
+          className="w-full h-full"
           style={{
-            background: isDownload
-              ? "linear-gradient(to top, #06b6d4, #10b981)"
-              : "linear-gradient(to top, #c084fc, #06b6d4)",
-            boxShadow: `0 0 12px ${glowColor}`,
+            clipPath: "polygon(22% 100%, 78% 100%, 100% 0%, 0% 0%)",
+            background:
+              "linear-gradient(to top, rgba(255, 255, 255, 0.01) 0%, rgba(255, 255, 255, 0.16) 35%, rgba(255, 255, 255, 0.65) 80%, rgba(255, 255, 255, 0.92) 100%)",
+            borderRadius: "2px 2px 0 0",
+            filter: "drop-shadow(0 0 6px rgba(255, 255, 255, 0.25))",
           }}
         />
       </motion.div>
 
-      {/* Center Pivot Point */}
-      <div className="absolute w-4 h-4 rounded-full bg-slate-900 border-2 border-cyan-400 shadow-md shadow-cyan-500/50" />
+      {/* 6. Digital Readout (Lower Center of Gauge) */}
+      <div className="absolute inset-x-0 bottom-[14%] sm:bottom-[15%] flex flex-col items-center justify-center pointer-events-none">
+        {/* Numerical Speed Readout (e.g. 100.55) */}
+        <span
+          ref={speedTextRef}
+          className="text-4xl sm:text-5xl md:text-6xl font-normal tracking-tight text-white drop-shadow-[0_2px_12px_rgba(0,0,0,0.8)] font-sans"
+        >
+          {currentMbps.toFixed(2)}
+        </span>
+
+        {/* Direction Icon + Mbps */}
+        <div className="flex items-center gap-1.5 mt-0.5">
+          <div className="w-4 h-4 rounded-full border border-purple-400/90 flex items-center justify-center text-purple-400">
+            {isUpload ? (
+              <ArrowUp className="w-2.5 h-2.5 stroke-[2.5]" />
+            ) : (
+              <ArrowDown className="w-2.5 h-2.5 stroke-[2.5]" />
+            )}
+          </div>
+          <span className="text-purple-400 font-medium text-xs sm:text-sm tracking-wide">
+            Mbps
+          </span>
+        </div>
+
+        {/* Transferred Volume Subtext */}
+        {bytesTransferred > 0 && (
+          <span className="text-[10px] text-slate-500 font-medium mt-1">
+            {transferredMB} MB transferred
+          </span>
+        )}
+      </div>
     </div>
   );
 };

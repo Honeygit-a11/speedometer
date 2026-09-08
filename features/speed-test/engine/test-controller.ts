@@ -371,7 +371,7 @@ export class SpeedTestController {
 
       if (candidates.length === 0) {
         throw new Error(
-          "No remote test servers configured. Set NEXT_PUBLIC_SPEEDTEST_WORKER_URL to your deployed Cloudflare Worker URL, or set NEXT_PUBLIC_ALLOW_LOCAL_SERVERS=true for local development only."
+          "No remote test servers configured. Set NEXT_PUBLIC_LIBRESPEED_URL to your Railway backend URL (or NEXT_PUBLIC_SPEEDTEST_WORKER_URL to your Cloudflare Worker URL)."
         );
       }
 

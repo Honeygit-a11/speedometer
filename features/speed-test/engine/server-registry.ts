@@ -58,9 +58,11 @@ function normalizeServer(input: Partial<SpeedTestServer>): SpeedTestServer | nul
  */
 export function filterServersForRuntime(
   servers: SpeedTestServer[],
-  env: NodeJS.ProcessEnv = process.env
+  env?: NodeJS.ProcessEnv
 ): SpeedTestServer[] {
-  const allowLocal = env.NEXT_PUBLIC_ALLOW_LOCAL_SERVERS === "true";
+  const allowLocal =
+    (env?.NEXT_PUBLIC_ALLOW_LOCAL_SERVERS ??
+      process.env.NEXT_PUBLIC_ALLOW_LOCAL_SERVERS) === "true";
   if (allowLocal) return servers;
 
   const isBrowser = typeof globalThis !== "undefined" && typeof globalThis.window !== "undefined";
@@ -78,10 +80,12 @@ export function filterServersForRuntime(
  *   3. NEXT_PUBLIC_LIBRESPEED_URL — LibreSpeed / Railway backend (remote only for accuracy).
  *   4. Local fallback (worker on 8787, then LibreSpeed on 8888).
  */
-export function getServerList(env: NodeJS.ProcessEnv = process.env): SpeedTestServer[] {
+export function getServerList(env?: NodeJS.ProcessEnv): SpeedTestServer[] {
   let servers: SpeedTestServer[] = [];
 
-  const raw = env.NEXT_PUBLIC_SPEEDTEST_SERVERS;
+  const raw =
+    env?.NEXT_PUBLIC_SPEEDTEST_SERVERS ??
+    process.env.NEXT_PUBLIC_SPEEDTEST_SERVERS;
   if (raw && raw.trim() !== "") {
     try {
       const parsed = JSON.parse(raw);
@@ -96,7 +100,9 @@ export function getServerList(env: NodeJS.ProcessEnv = process.env): SpeedTestSe
   }
 
   if (servers.length === 0) {
-    const workerUrl = env.NEXT_PUBLIC_SPEEDTEST_WORKER_URL;
+    const workerUrl =
+      env?.NEXT_PUBLIC_SPEEDTEST_WORKER_URL ??
+      process.env.NEXT_PUBLIC_SPEEDTEST_WORKER_URL;
     if (workerUrl && workerUrl.trim() !== "") {
       servers = [
         {
@@ -111,7 +117,9 @@ export function getServerList(env: NodeJS.ProcessEnv = process.env): SpeedTestSe
   }
 
   if (servers.length === 0) {
-    const librespeedUrl = env.NEXT_PUBLIC_LIBRESPEED_URL;
+    const librespeedUrl =
+      env?.NEXT_PUBLIC_LIBRESPEED_URL ??
+      process.env.NEXT_PUBLIC_LIBRESPEED_URL;
     if (librespeedUrl && librespeedUrl.trim() !== "") {
       servers = [
         {

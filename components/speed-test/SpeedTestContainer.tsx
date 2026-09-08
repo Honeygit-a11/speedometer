@@ -5,7 +5,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { SpeedTestState } from "@/types";
 import { speedTestController } from "@/features/speed-test/engine/test-controller";
 import { SpeedMeter } from "./SpeedMeter";
-import { SpeedDisplay } from "./SpeedDisplay";
 import { TestProgress } from "./TestProgress";
 import { MetricCard } from "./MetricCard";
 import { Results } from "./Results";
@@ -214,14 +213,8 @@ export const SpeedTestContainer: React.FC = () => {
                 <SpeedMeter
                   currentMbps={activeSpeed}
                   phase={state.phase}
+                  bytesTransferred={activeTransferred}
                 />
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none mt-14">
-                  <SpeedDisplay
-                    speedMbps={activeSpeed}
-                    phase={state.phase}
-                    bytesTransferred={activeTransferred}
-                  />
-                </div>
               </div>
             </motion.div>
           )}
