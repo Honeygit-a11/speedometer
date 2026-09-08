@@ -57,7 +57,7 @@ const server = http.createServer((req, res) => {
 <body>
   <div class="card">
     <h1>LibreSpeed Backend <span class="badge">ONLINE</span></h1>
-    <p>The speed test measurement server is active and listening on port 8888.</p>
+    <p>The speed test measurement server is active and listening on port ${PORT}.</p>
     <div class="endpoint">
       <span><span class="method">GET</span> <span class="path">/empty</span></span>
       <span class="desc">Ping & Jitter</span>
@@ -78,7 +78,7 @@ const server = http.createServer((req, res) => {
       <span><span class="method">GET</span> <span class="path">/health</span></span>
       <span class="desc">Health Check</span>
     </div>
-    <a class="btn" href="http://localhost:3000" target="_blank">Open Speedometer UI (Port 3000) &rarr;</a>
+    <a class="btn" href="http://localhost:3001" target="_blank">Open Speedometer UI (Port 3001) &rarr;</a>
   </div>
 </body>
 </html>`);
