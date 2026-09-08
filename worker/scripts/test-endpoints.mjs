@@ -64,7 +64,21 @@ async function runTests() {
     assert(false, `Ping test failed: ${err.message}`);
   }
 
-  // TEST 4: Download Streaming Endpoint
+  // TEST 4: Client Identity (getIP) Endpoint
+  try {
+    const res = await fetch(`${BASE_URL}/getIP`, {
+      cache: "no-store",
+    });
+    const data = await res.json();
+    assert(res.status === 200, "GET /getIP returns 200 OK");
+    assert(data.status === "ok", "GET /getIP body status is 'ok'");
+    assert(typeof data.ip === "string" && data.ip.length > 0, "GET /getIP returns a client IP string");
+    assert(res.headers.get("cache-control")?.includes("no-store"), "getIP enforces cache-control: no-store");
+  } catch (err) {
+    assert(false, `getIP test failed: ${err.message}`);
+  }
+
+  // TEST 5: Download Streaming Endpoint
   try {
     const testBytes = 2 * 1024 * 1024; // 2 MB
     const t0 = performance.now();

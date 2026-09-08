@@ -2,7 +2,7 @@
 
 import React from "react";
 import { motion } from "framer-motion";
-import { Activity, ArrowDown, ArrowUp, Check, Award } from "lucide-react";
+import { Activity, ArrowDown, ArrowUp, Check, Award, Server } from "lucide-react";
 import { TestPhase } from "@/types";
 
 interface TestProgressProps {
@@ -11,6 +11,14 @@ interface TestProgressProps {
 
 export const TestProgress: React.FC<TestProgressProps> = ({ phase }) => {
   const steps = [
+    {
+      id: "SERVER",
+      label: "Server",
+      icon: Server,
+      color: "cyan",
+      isCompleted: ["PING_TEST", "DOWNLOAD_TEST", "UPLOAD_TEST", "PROCESS_RESULTS", "COMPLETED"].includes(phase),
+      isActive: ["INITIALIZING", "DISCOVERING_SERVERS", "PROBING_SERVERS", "SELECTING_SERVER"].includes(phase),
+    },
     {
       id: "PING_TEST",
       label: "Ping",

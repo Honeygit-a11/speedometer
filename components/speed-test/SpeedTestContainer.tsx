@@ -54,12 +54,24 @@ export const SpeedTestContainer: React.FC = () => {
     speedTestController.reset();
   }, []);
 
-  const isTesting = [
+  const SELECTION_PHASES = ["INITIALIZING", "DISCOVERING_SERVERS", "PROBING_SERVERS", "SELECTING_SERVER"];
+
+const isTesting = [
     "INITIALIZING",
+    "DISCOVERING_SERVERS",
+    "PROBING_SERVERS",
+    "SELECTING_SERVER",
     "PING_TEST",
     "DOWNLOAD_TEST",
     "UPLOAD_TEST",
     "PROCESS_RESULTS",
+  ].includes(state.phase);
+
+  const isTerminalError = [
+    "ERROR",
+    "SERVER_UNREACHABLE",
+    "NETWORK_ERROR",
+    "TIMEOUT",
   ].includes(state.phase);
 
   const activeSpeed =
@@ -92,7 +104,7 @@ export const SpeedTestContainer: React.FC = () => {
       <Aurora className="opacity-40" />
 
       {/* Test Stage Timeline (Visible during testing or when completed) */}
-      {state.phase !== "IDLE" && state.phase !== "CANCELLED" && state.phase !== "ERROR" && (
+      {state.phase !== "IDLE" && state.phase !== "CANCELLED" && !isTerminalError && (
         <TestProgress phase={state.phase} />
       )}
 
@@ -145,8 +157,8 @@ export const SpeedTestContainer: React.FC = () => {
             </motion.div>
           )}
 
-          {/* 2. INITIALIZING STATE */}
-          {state.phase === "INITIALIZING" && (
+          {/* 2. INITIALIZING / SERVER DISCOVERY STATE */}
+          {SELECTION_PHASES.includes(state.phase) && (
             <motion.div
               key="init"
               variants={phaseVariants}
@@ -162,7 +174,13 @@ export const SpeedTestContainer: React.FC = () => {
               <div className="text-center space-y-1">
                 <h3 className="text-lg font-bold text-white">Connecting to best test server</h3>
                 <p className="text-xs text-slate-400">
-                  {state.server
+                  {state.phase === "PROBING_SERVERS"
+                    ? "Probing available edge nodes by latency & health..."
+                    : state.phase === "SELECTING_SERVER"
+                    ? "Selecting lowest-latency healthy server..."
+                    : state.phase === "DISCOVERING_SERVERS"
+                    ? "Resolving distributed server registry..."
+                    : state.server
                     ? `${state.server.name} · ${state.server.region} · ${state.server.latencyMs}ms`
                     : "Probing available edge nodes by latency..."}
                 </p>
@@ -216,6 +234,29 @@ export const SpeedTestContainer: React.FC = () => {
                   bytesTransferred={activeTransferred}
                 />
               </div>
+
+              {/* Live measurement detail (Phase 12): average speed + active streams */}
+              <div className="flex items-center gap-3 text-[11px] text-slate-400 mt-1">
+                <span>
+                  Avg{" "}
+                  <span className="text-slate-200 font-semibold">
+                    {formatSpeed(
+                      (state.phase === "DOWNLOAD_TEST"
+                        ? state.download.averageMbps
+                        : state.upload.averageMbps) ?? 0
+                    )}
+                  </span>
+                </span>
+                <span className="text-slate-700">·</span>
+                <span>
+                  <span className="text-slate-200 font-semibold">
+                    {(state.phase === "DOWNLOAD_TEST"
+                      ? state.download.streamCount
+                      : state.upload.streamCount) ?? 1}
+                  </span>{" "}
+                  streams
+                </span>
+              </div>
             </motion.div>
           )}
 
@@ -255,8 +296,8 @@ export const SpeedTestContainer: React.FC = () => {
             </motion.div>
           )}
 
-          {/* 8. ERROR STATE */}
-          {state.phase === "ERROR" && (
+          {/* 8. ERROR STATE (with distinct terminal error phases) */}
+          {isTerminalError && (
             <motion.div
               key="error"
               variants={phaseVariants}
@@ -270,7 +311,15 @@ export const SpeedTestContainer: React.FC = () => {
                 <AlertCircle className="w-7 h-7" />
               </div>
               <div className="space-y-1 max-w-sm">
-                <h3 className="text-base font-bold text-white">Measurement Error</h3>
+                <h3 className="text-base font-bold text-white">
+                  {state.phase === "SERVER_UNREACHABLE"
+                    ? "No Test Servers Reachable"
+                    : state.phase === "NETWORK_ERROR"
+                    ? "Network Connection Lost"
+                    : state.phase === "TIMEOUT"
+                    ? "Test Timed Out"
+                    : "Measurement Error"}
+                </h3>
                 <p className="text-xs text-rose-300">
                   {state.error || "Network connection interrupted or edge worker unreachable."}
                 </p>
@@ -340,6 +389,16 @@ export const SpeedTestContainer: React.FC = () => {
               {state.server.latencyMs}ms
             </span>
           </div>
+          {state.identity?.ip && (
+            <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400/80" />
+              <span>
+                {state.identity.ip}
+                {state.identity.isp ? ` · ${state.identity.isp}` : ""}
+                {state.identity.country ? ` · ${state.identity.country}` : ""}
+              </span>
+            </div>
+          )}
           {isLocalServer && (
             <p className="text-[11px] text-amber-400/90 text-center max-w-md leading-relaxed">
               Local server detected — results reflect loopback throughput on your machine, not your ISP

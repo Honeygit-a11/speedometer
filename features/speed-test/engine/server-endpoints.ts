@@ -32,6 +32,24 @@ export function getPingPath(backend: ServerBackend): string {
   return backend === "librespeed" ? "/empty" : "/ping";
 }
 
+/** Both backend families expose a /getIP endpoint for identity/geo lookup. */
+export function buildGetIpUrl(baseUrl: string): string {
+  const base = baseUrl.replace(/\/+$/, "");
+  return `${base}/getIP?_t=${Date.now()}`;
+}
+
+/** Health/liveness endpoint. Only the standard worker exposes /health. */
+export function getHealthPath(backend: ServerBackend): string | null {
+  return backend === "librespeed" ? null : "/health";
+}
+
+export function buildHealthUrl(baseUrl: string, backend: ServerBackend): string | null {
+  const path = getHealthPath(backend);
+  if (!path) return null;
+  const base = baseUrl.replace(/\/+$/, "");
+  return `${base}${path}?_t=${Date.now()}`;
+}
+
 export function getDownloadPath(backend: ServerBackend): string {
   return backend === "librespeed" ? "/garbage" : "/download";
 }

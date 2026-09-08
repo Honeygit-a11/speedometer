@@ -33,6 +33,7 @@ const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX_REQUESTS = 180; // general / fallback budget
 const RATE_LIMIT_BUDGETS: Record<string, number> = {
   ping: 600, // latency probes + loaded-latency probes
+  getip: 600, // lightweight identity lookup, low volume
   download: 240, // measurement issues few, large chunk requests
   upload: 6000, // measurement issues many small upload chunks
   other: RATE_LIMIT_MAX_REQUESTS,
@@ -46,6 +47,7 @@ function isLocalIp(ip: string): boolean {
 function routeBucket(pathname: string): string {
   const path = pathname.replace(/\/$/, "");
   if (path === "/ping" || path === "/api/ping") return "ping";
+  if (path === "/getIP" || path === "/api/getIP") return "getip";
   if (path === "/download" || path === "/api/download") return "download";
   if (path === "/upload" || path === "/api/upload") return "upload";
   return "other";
@@ -214,7 +216,43 @@ export default {
       );
     }
 
-    // 4. Ping Endpoint (Strict GET/HEAD only)
+    // 4. Client Identity Endpoint (Strict GET/HEAD only)
+    // Returns the client's public IP / ISP / region as seen by the edge. The
+    // engine and UI surface this Fast.com-style identity line; no data is stored.
+    if (path === "/getIP" || path === "/api/getIP") {
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        return new Response(JSON.stringify({ error: "Method Not Allowed. Use GET." }), {
+          status: 405,
+          headers: {
+            ...securityHeaders,
+            "Content-Type": "application/json",
+            Allow: "GET, HEAD, OPTIONS",
+          },
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          ip: clientIp,
+          isp: request.headers.get("CF-IPCountry")
+            ? undefined
+            : request.headers.get("X-ISP") || undefined,
+          country: request.headers.get("CF-IPCountry") || undefined,
+        }),
+        {
+          status: 200,
+          headers: {
+            ...securityHeaders,
+            "Content-Type": "application/json",
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            Pragma: "no-cache",
+          },
+        }
+      );
+    }
+
+    // 5. Ping Endpoint (Strict GET/HEAD only)
     if (path === "/ping" || path === "/api/ping") {
       if (request.method !== "GET" && request.method !== "HEAD") {
         return new Response(JSON.stringify({ error: "Method Not Allowed. Use GET." }), {

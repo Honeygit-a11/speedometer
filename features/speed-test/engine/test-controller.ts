@@ -6,6 +6,7 @@ import { aggregateResults } from "./results";
 import { checkBrowserCompatibility } from "./compatibility";
 import { getServerList, SpeedTestServer } from "./server-registry";
 import { selectBestServer, ServerSelectionResult } from "./server-selection";
+import { fetchClientIdentity } from "./client-identity";
 import { libreSpeedClient } from "../integration/librespeed-client";
 import { detectServerBackend } from "./server-endpoints";
 
@@ -26,6 +27,24 @@ export interface SpeedTestConfig {
 
 export type StateChangeListener = (state: SpeedTestState) => void;
 
+/**
+ * Classifies a test failure into a distinct terminal phase (Phase 11 error
+ * states) so the UI can differentiate "no servers reachable" from a request
+ * timeout from a network drop. Falls back to ERROR when the cause is unknown.
+ */
+function classifyError(err: unknown): Extract<TestPhase, "ERROR" | "SERVER_UNREACHABLE" | "NETWORK_ERROR" | "TIMEOUT"> {
+  const name = (err as Error)?.name;
+  const message = (err as Error)?.message ?? String(err);
+
+  if (/unreachable/i.test(message)) return "SERVER_UNREACHABLE";
+  if (name === "AbortError") return "TIMEOUT";
+  if (/fetch failed|networkerror|network error|failed to fetch/i.test(message)) {
+    return "NETWORK_ERROR";
+  }
+  if (/timed out|timeout|aborted after/i.test(message)) return "TIMEOUT";
+  return "ERROR";
+}
+
 const EMPTY_PING = { currentPing: 0, minPing: 0, avgPing: 0, medianPing: 0, samples: [] };
 const EMPTY_SPEED = { currentMbps: 0, bytesTransferred: 0, elapsedMs: 0, finalMbps: 0 };
 
@@ -38,6 +57,7 @@ const INITIAL_STATE: SpeedTestState = {
   results: null,
   error: null,
   server: null,
+  identity: null,
 };
 
 /**
@@ -105,6 +125,7 @@ export class SpeedTestController {
       results: null,
       error: null,
       server: null,
+      identity: null,
     };
     this.notify();
   }
@@ -169,6 +190,8 @@ export class SpeedTestController {
             currentMbps: metrics.currentMbps,
             bytesTransferred: metrics.bytesTransferred,
             elapsedMs: metrics.elapsedMs,
+            averageMbps: metrics.averageMbps,
+            streamCount: metrics.streamCount,
             finalMbps: 0,
           },
         });
@@ -191,6 +214,8 @@ export class SpeedTestController {
             currentMbps: metrics.currentMbps,
             bytesTransferred: metrics.bytesTransferred,
             elapsedMs: metrics.elapsedMs,
+            averageMbps: metrics.averageMbps,
+            streamCount: metrics.streamCount,
             finalMbps: 0,
           },
         });
@@ -362,9 +387,11 @@ export class SpeedTestController {
         error: null,
         results: null,
         server: null,
+        identity: null,
       });
 
-      // 2. SERVER DISCOVERY + BEST-SERVER SELECTION (latency-based, not geolocated)
+      // 2. SERVER DISCOVERY (Phase 11) — resolve the registry, then probe.
+      this.updateState({ phase: "DISCOVERING_SERVERS" });
       const candidates = config.servers && config.servers.length > 0
         ? config.servers
         : getServerList();
@@ -375,6 +402,8 @@ export class SpeedTestController {
         );
       }
 
+      // PROBING_SERVERS → measure latency + health of candidates.
+      this.updateState({ phase: "PROBING_SERVERS" });
       const selection = await selectBestServer({
         servers: candidates,
         probeCount: config.serverProbeCount ?? 4,
@@ -384,8 +413,20 @@ export class SpeedTestController {
         },
       });
 
+      // SELECTING_SERVER — best server chosen (latency-ranked w/ health check).
+      this.updateState({ phase: "SELECTING_SERVER" });
+
       const ranks: ServerSelectionResult[] = selection.ranked;
       let lastFailure: Error | null = null;
+
+      // Client identity (IP/ISP/region) from the best server — informational
+      // only, never load-bearing. A failed lookup leaves identity as null.
+      try {
+        const identity = await fetchClientIdentity(ranks[0].server.baseUrl, 2500, signal);
+        if (identity) this.updateState({ identity });
+      } catch {
+        // ignore identity lookup failures entirely
+      }
 
       // 3. RUN THE TEST AGAINST THE BEST SERVER, FAILOVER DOWN THE RANKED LIST
       for (const rank of ranks) {
@@ -434,7 +475,10 @@ export class SpeedTestController {
       }
 
       const errorMessage = lastFailure?.message || "Speed test failed against all test servers";
-      this.updateState({ phase: "ERROR", error: errorMessage });
+      this.updateState({
+        phase: classifyError(lastFailure ?? new Error(errorMessage)),
+        error: errorMessage,
+      });
       throw lastFailure ?? new Error(errorMessage);
     } catch (err: unknown) {
       this.isRunning = false;
@@ -447,7 +491,7 @@ export class SpeedTestController {
 
       const errorMessage = (err as Error)?.message || "Speed test failed";
       this.updateState({
-        phase: "ERROR",
+        phase: classifyError(err),
         error: errorMessage,
       });
       throw err;

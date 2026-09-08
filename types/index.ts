@@ -1,12 +1,20 @@
+import type { ClientIdentity } from "@/features/speed-test/engine/client-identity";
+
 export type TestPhase =
   | "IDLE"
   | "INITIALIZING"
+  | "DISCOVERING_SERVERS"
+  | "PROBING_SERVERS"
+  | "SELECTING_SERVER"
   | "PING_TEST"
   | "DOWNLOAD_TEST"
   | "UPLOAD_TEST"
   | "PROCESS_RESULTS"
   | "COMPLETED"
   | "ERROR"
+  | "SERVER_UNREACHABLE"
+  | "NETWORK_ERROR"
+  | "TIMEOUT"
   | "CANCELLED";
 
 export interface PingMetrics {
@@ -55,6 +63,8 @@ export interface SpeedMetrics {
   currentMbps: number;
   bytesTransferred: number;
   elapsedMs: number;
+  /** Live bytes/elapsed average — display only, never a final result. */
+  averageMbps?: number;
   /** Final ground-truth result (post-warmup bytes / post-warmup duration). */
   finalMbps: number;
   loadedLatencyMs?: number;
@@ -104,6 +114,8 @@ export interface SpeedTestState {
   error: string | null;
   /** Selected test server info (set after server selection). */
   server?: SelectedServerInfo | null;
+  /** Client identity (IP / ISP / region) from the selected server, if any. */
+  identity?: ClientIdentity | null;
 }
 
 /** Information about the server selected for the current test. */

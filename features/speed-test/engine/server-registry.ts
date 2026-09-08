@@ -22,6 +22,10 @@ export interface SpeedTestServer {
   baseUrl: string;
   /** API style — auto-detected from id/name when omitted. */
   backend?: ServerBackend;
+  /** Disabled servers are excluded from discovery (default true). */
+  enabled?: boolean;
+  /** Lower = preferred. Used as a tiebreaker after measured latency. */
+  priority?: number;
 }
 
 export interface ServerSelectionResult {
@@ -49,9 +53,13 @@ function normalizeServer(input: Partial<SpeedTestServer>): SpeedTestServer | nul
     name: input.name || "Edge Server",
     region: input.region || "auto",
     baseUrl: normalizeBaseUrl(input.baseUrl),
+    enabled: input.enabled !== false,
   };
   if (input.backend === "librespeed" || input.backend === "standard") {
     server.backend = input.backend;
+  }
+  if (typeof input.priority === "number" && Number.isFinite(input.priority)) {
+    server.priority = input.priority;
   }
   return server;
 }
@@ -64,15 +72,18 @@ export function filterServersForRuntime(
   servers: SpeedTestServer[],
   env?: NodeJS.ProcessEnv
 ): SpeedTestServer[] {
+  // Disabled servers are never eligible, in any runtime.
+  const enabled = servers.filter((s) => s.enabled !== false);
+
   const allowLocal =
     (env?.NEXT_PUBLIC_ALLOW_LOCAL_SERVERS ??
       process.env.NEXT_PUBLIC_ALLOW_LOCAL_SERVERS) === "true";
-  if (allowLocal) return servers;
+  if (allowLocal) return enabled;
 
   const isBrowser = typeof globalThis !== "undefined" && typeof globalThis.window !== "undefined";
-  if (!isBrowser) return servers;
+  if (!isBrowser) return enabled;
 
-  return servers.filter((s) => !isLoopbackUrl(s.baseUrl));
+  return enabled.filter((s) => !isLoopbackUrl(s.baseUrl));
 }
 
 /**

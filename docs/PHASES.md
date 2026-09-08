@@ -157,8 +157,11 @@
 - [x] Production environment variable template (`.env.production.example`)
 - [x] Comprehensive deployment documentation for Cloudflare Workers & Vercel/Pages (`docs/DEPLOYMENT.md`)
 - [x] Automated pre-flight checklist verification script (`scripts/verify-production-readiness.mjs`)
+- [x] Multi-server registry documented (per-server `enabled` / `priority` / `backend` fields in env templates + `docs/DEPLOYMENT.md`)
+- [x] `/getIP` (client identity) and `/health` (selection liveness probe) endpoints documented in `docs/DEPLOYMENT.md`
 
 ### Acceptance Criteria
 - [x] All 10 pre-flight production checklist items verified and passed (10/10)
+- [x] Server registry & discovery verification passed (10/10, `scripts/verify-server-discovery.mjs`)
 - [x] Complete production deployment guide documented in `docs/DEPLOYMENT.md`
 - [x] Next.js production build succeeded with zero errors and zero warnings

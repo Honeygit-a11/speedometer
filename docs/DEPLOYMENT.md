@@ -14,19 +14,14 @@ Next.js Application (Vercel / Cloudflare Pages)
     │
     ▼
 Browser-Side Speed Test Engine
-    ├───────────────────────┐
-    ▼                       ▼
-Ping Endpoint           Download Endpoint
-(/ping)                 (/download)
-    │                       │
-    └───────────┬───────────┘
-                ▼
-          Upload Endpoint
-          (/upload)
-                │
-                ▼
-        Cloudflare Workers
-        (Global Edge Network)
+    │  (server registry → latency + /health probe → best server → failover)
+    ▼
+        Cloudflare Workers (one or more edge nodes)
+        ├─ GET  /ping       latency probe (JSON)
+        ├─ GET  /download   streamed 64KB chunks (octet-stream)
+        ├─ POST /upload     streaming sink, payload discarded
+        ├─ GET  /health     liveness probe (used in server selection)
+        └─ GET  /getIP      client identity lookup (IP/ISP/country)
 ```
 
 - **Zero Database**: Real-time calculated results directly rendered in browser.
@@ -38,7 +33,7 @@ Ping Endpoint           Download Endpoint
 
 ## 1. Deploy Cloudflare Workers (Edge Infrastructure)
 
-The Cloudflare Worker provides the `/ping`, `/download`, and `/upload` endpoints with rate limiting, bandwidth budgeting, and CORS enforcement.
+The Cloudflare Worker provides the `/ping`, `/download`, `/upload`, `/health`, and `/getIP` endpoints with rate limiting, bandwidth budgeting, and CORS enforcement.
 
 ### Step 1.1: Authenticate with Cloudflare
 ```bash
@@ -70,6 +65,27 @@ https://speedtest-worker-prod.<your-subdomain>.workers.dev
 ```
 
 *(Optional: Bind a custom domain in the Cloudflare Dashboard under Worker > Triggers > Custom Domains, e.g. `speed-edge.yourdomain.com`)*.
+
+---
+
+## 1.5. Multi-Server Registry (Optional, Recommended)
+
+Deploy the worker to multiple regions (e.g. `wrangler deploy --env production` with per-region environments, or duplicate workers on distinct subdomains), then point the frontend at all of them. The engine probes each candidate by **measured latency + `/health`** and selects the lowest-latency healthy server, failing over to the next ranked server on error.
+
+In your frontend environment variables, set `NEXT_PUBLIC_SPEEDTEST_SERVERS` (JSON array) instead of a single `NEXT_PUBLIC_SPEEDTEST_WORKER_URL`:
+
+```json
+[
+  {"id":"us-east","name":"US East","region":"us-east","baseUrl":"https://speed-edge-us.yourdomain.workers.dev","priority":1},
+  {"id":"eu-west","name":"EU West","region":"eu-west","baseUrl":"https://speed-edge-eu.yourdomain.workers.dev","priority":2},
+  {"id":"asia","name":"Asia","region":"asia","baseUrl":"https://speed-edge-asia.yourdomain.workers.dev","priority":3}
+]
+```
+
+Optional per-server fields:
+- `backend` — `"standard"` (Cloudflare, default) or `"librespeed"`.
+- `enabled` — `false` excludes a server from discovery (e.g. keep a staging node in config but off).
+- `priority` — lower value is preferred; used as a tiebreaker after measured latency.
 
 ---
 

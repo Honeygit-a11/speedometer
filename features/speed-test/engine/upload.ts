@@ -35,7 +35,14 @@ export interface UploadTestOptions {
   stableDurationMs?: number;
   minSampleCount?: number;
   signal?: AbortSignal;
-  onProgress?: (metrics: { currentMbps: number; bytesTransferred: number; elapsedMs: number; progress: number }) => void;
+  onProgress?: (metrics: {
+    currentMbps: number;
+    bytesTransferred: number;
+    elapsedMs: number;
+    progress: number;
+    streamCount: number;
+    averageMbps: number;
+  }) => void;
 }
 
 /**
@@ -241,11 +248,16 @@ export async function runUploadTest(options: UploadTestOptions): Promise<SpeedMe
       const progress = Math.min(1, elapsedTotalMs / maxDurationMs);
 
       if (onProgress) {
+        const elapsedSec = Math.max(0.1, elapsedTotalMs / 1000);
         onProgress({
           currentMbps: currentSmoothedMbps,
           bytesTransferred: totalBytesTransferred,
           elapsedMs: Math.round(elapsedTotalMs),
           progress: Number(progress.toFixed(2)),
+          streamCount: targetStreams,
+          averageMbps: Number(
+            calculateSpeedMbps(totalBytesTransferred, elapsedSec).toFixed(1)
+          ),
         });
       }
 

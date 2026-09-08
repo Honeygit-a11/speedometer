@@ -2,9 +2,54 @@ import {
   SpeedTestServer,
   ServerSelectionResult,
 } from "./server-registry";
-import { buildPingUrl, detectServerBackend } from "./server-endpoints";
+import { buildHealthUrl, buildPingUrl, detectServerBackend } from "./server-endpoints";
 
 export type { ServerSelectionResult };
+
+export interface ServerHealthResult {
+  server: SpeedTestServer;
+  healthy: boolean;
+  latencyMs: number;
+}
+
+/**
+ * Fast liveness check against /health (standard worker). A server that fails
+ * health is not hard-excluded — it still gets a latency-probe sweep — but the
+ * result is surfaced so callers can weight or report it. LibreSpeed backends
+ * have no /health, so they probe via latency only.
+ */
+export async function checkServerHealth(
+  server: SpeedTestServer,
+  timeoutMs = 2500,
+  signal?: AbortSignal
+): Promise<ServerHealthResult> {
+  const backend = detectServerBackend(server);
+  const healthUrl = buildHealthUrl(server.baseUrl, backend);
+  if (!healthUrl) {
+    return { server, healthy: true, latencyMs: 0 };
+  }
+
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
+  const onExternalAbort = () => timeoutController.abort();
+  signal?.addEventListener("abort", onExternalAbort, { once: true });
+
+  try {
+    const start = performance.now();
+    const res = await fetch(healthUrl, {
+      cache: "no-store",
+      signal: timeoutController.signal,
+    });
+    if (!res.ok) return { server, healthy: false, latencyMs: Infinity };
+    await res.text();
+    return { server, healthy: true, latencyMs: performance.now() - start };
+  } catch {
+    return { server, healthy: false, latencyMs: Infinity };
+  } finally {
+    clearTimeout(timeoutId);
+    signal?.removeEventListener("abort", onExternalAbort);
+  }
+}
 
 export interface ServerSelectionOptions {
   servers: SpeedTestServer[];
@@ -24,6 +69,8 @@ export interface LatencyProbeResult {
   latencyMs: number;
   probeCount: number;
   healthy: boolean;
+  /** Whether the /health liveness probe responded OK (standard backends). */
+  healthOk?: boolean;
 }
 
 /**
@@ -40,6 +87,14 @@ export async function probeServerLatency(
   const backend = detectServerBackend(server);
   const pingBaseUrl = buildPingUrl(server.baseUrl, backend);
   const samples: number[] = [];
+
+  // Phase 4 "Check Server Health": a /health probe leads the sweep. A healthy
+  // response both confirms liveness and yields a low-variance latency sample;
+  // a failure does not exclude the server — it still gets its ping sweep.
+  const health = await checkServerHealth(server, probeTimeoutMs, signal);
+  if (health.healthy && health.latencyMs > 0) {
+    samples.push(health.latencyMs);
+  }
 
   for (let i = 0; i < probeCount; i++) {
     if (signal?.aborted) {
@@ -75,7 +130,13 @@ export async function probeServerLatency(
   }
 
   if (samples.length === 0) {
-    return { server, latencyMs: Infinity, probeCount: 0, healthy: false };
+    return {
+      server,
+      latencyMs: Infinity,
+      probeCount: 0,
+      healthy: false,
+      healthOk: health.healthy,
+    };
   }
 
   const avg = samples.reduce((a, b) => a + b, 0) / samples.length;
@@ -84,6 +145,7 @@ export async function probeServerLatency(
     latencyMs: Number(avg.toFixed(1)),
     probeCount: samples.length,
     healthy: true,
+    healthOk: health.healthy,
   };
 }
 
@@ -123,7 +185,12 @@ export async function rankServersByLatency(
 
   const healthy = results
     .filter((r) => r.healthy)
-    .sort((a, b) => a.latencyMs - b.latencyMs);
+    .sort((a, b) => {
+      const pa = a.server.priority ?? 0;
+      const pb = b.server.priority ?? 0;
+      if (pa !== pb) return pa - pb;
+      return a.latencyMs - b.latencyMs;
+    });
 
   if (healthy.length === 0) {
     throw new Error(
