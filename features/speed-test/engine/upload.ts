@@ -45,19 +45,31 @@ export interface UploadTestOptions {
   }) => void;
 }
 
+// Pre-allocated static buffers to avoid continuous heap allocations and GC spikes
+const CHUNK_256KB = new Uint8Array(256 * 1024);
+const CHUNK_512KB = new Uint8Array(512 * 1024);
+const CHUNK_1MB = new Uint8Array(1024 * 1024);
+
 /**
- * Multi-connection upload measurement.
+ * Dynamically selects chunk size based on current throughput to ensure:
+ *  - Fast start & frequent acknowledgments (<200ms) on low/medium connections
+ *  - Maximum socket saturation with larger chunks on fast connections
+ */
+function selectUploadChunk(currentMbps: number): Uint8Array {
+  if (currentMbps > 150) return CHUNK_1MB;
+  if (currentMbps > 40) return CHUNK_512KB;
+  return CHUNK_256KB;
+}
+
+/**
+ * Multi-connection upload measurement with adaptive chunk sizing.
  *
  * Accuracy rules:
  *  - Only bytes the SERVER confirms it received are counted (via the /upload
- *    response's `bytesReceived`). Data handed to the browser transport but not
- *    delivered is NOT credited — the client's tally is anchored to the server's.
- *  - Requests aborted mid-flight at test end are NOT credited (unconfirmed
- *    bytes would otherwise inflate the result).
- *  - Final result = confirmed post-warmup bytes / post-warmup duration. Never a
- *    smoothed display value, never a synthetic estimate.
- *  - Concurrency ramps up during warmup only; adaptive early termination after
- *    a minimum duration once throughput is stable.
+ *    response's `bytesReceived` or completed HTTP 200 payload).
+ *  - Adaptive chunk size (256KB -> 512KB -> 1MB) prevents needle freeze on low/mid speeds.
+ *  - Final result = confirmed post-warmup bytes / post-warmup duration.
+ *  - Concurrency ramps up geometrically during warmup only and freezes during measurement.
  */
 export async function runUploadTest(options: UploadTestOptions): Promise<SpeedMetrics> {
   const {
@@ -67,9 +79,8 @@ export async function runUploadTest(options: UploadTestOptions): Promise<SpeedMe
     maxDurationMs = 8000,
     minDurationMs = 4000,
     warmupMs = 1500,
-    initialStreams = 3,
+    initialStreams = 2,
     maxStreams = 8,
-    payloadChunkSize = 1 * 1024 * 1024,
     stabilityThreshold = 0.25,
     stableDurationMs = 1500,
     minSampleCount = 12,
@@ -93,7 +104,6 @@ export async function runUploadTest(options: UploadTestOptions): Promise<SpeedMe
   const rawSamples: RawMeasurementSample[] = [];
   const loadedLatencySamples: number[] = [];
   let lastProbeTime = 0;
-  let streamFailures = 0;
 
   let warmupPassed = false;
   let bytesAtWarmupEnd = 0;
@@ -104,55 +114,60 @@ export async function runUploadTest(options: UploadTestOptions): Promise<SpeedMe
   let targetStreams = initialStreams;
 
   async function uploadWorker(streamId: number) {
+    let consecutiveErrors = 0;
     try {
       while (!internalController.signal.aborted) {
         const remainingTime = maxDurationMs - (performance.now() - startTime);
         if (remainingTime <= 0) break;
 
-        // Plain Uint8Array body — avoids ReadableStream + duplex:"half"
-        // which triggers ERR_ALPN_NEGOTIATION_FAILED on local HTTP.
-        const payload = new Uint8Array(payloadChunkSize);
+        // Use dynamically sized chunk based on current throughput
+        const payload = selectUploadChunk(currentSmoothedMbps);
+        const expectedBytes = payload.byteLength;
 
         try {
           const res = await fetch(buildUploadUrl(workerUrl, backend, streamId), {
             method: "POST",
             headers: { "Content-Type": "application/octet-stream" },
-            body: payload,
+            body: payload as unknown as BodyInit,
             cache: "no-store",
             signal: internalController.signal,
           });
 
           if (!res.ok) {
-            streamFailures++;
-            break;
+            consecutiveErrors++;
+            if (consecutiveErrors >= 3) break;
+            await new Promise((r) => setTimeout(r, 50));
+            continue;
           }
 
-          // Authoritative byte count: the server reports exactly what it
-          // received. This corrects any transport-buffer over-credit and
-          // does not count bytes that never arrived.
-          let confirmedBytes = payloadChunkSize;
+          consecutiveErrors = 0;
+
+          // Authoritative byte count: read server confirmation if available
+          let confirmedBytes = expectedBytes;
           try {
             const json = (await res.json()) as { bytesReceived?: number };
             if (typeof json.bytesReceived === "number" && json.bytesReceived >= 0) {
               confirmedBytes = json.bytesReceived;
             }
           } catch {
-            // If the confirmation body is unreadable, fall back to the
-            // known payload size (request fully completed = delivered).
+            // Server returned 200 OK without JSON body (valid for /empty POST sink)
           }
+
           totalBytesTransferred += confirmedBytes;
         } catch (err: unknown) {
-          if ((err as Error)?.name !== "AbortError") {
-            streamFailures++;
-            console.warn(`[SpeedTest Engine] Upload stream #${streamId} error:`, err);
+          if ((err as Error)?.name === "AbortError" || internalController.signal.aborted) {
+            break;
           }
-          // AbortError = test ended mid-request. The in-flight bytes are NOT
-          // confirmed delivered, so they are not credited.
-          break;
+          consecutiveErrors++;
+          if (consecutiveErrors >= 3) {
+            console.warn(`[SpeedTest Engine] Upload stream #${streamId} stopped after errors:`, err);
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 50));
         }
       }
     } finally {
-      // no-op; scaling tracks targetStreams externally
+      // Stream exited
     }
   }
 
@@ -169,10 +184,11 @@ export async function runUploadTest(options: UploadTestOptions): Promise<SpeedMe
         loadedLatencySamples.push(performance.now() - t0);
       }
     } catch {
-      // Ignore probe aborts / transient failures.
+      // Ignore probe aborts / transient failures
     }
   }
 
+  // Start initial parallel upload streams
   for (let i = 0; i < targetStreams; i++) {
     uploadWorker(i);
   }
@@ -240,11 +256,11 @@ export async function runUploadTest(options: UploadTestOptions): Promise<SpeedMe
         // Fast.com-style geometric upload scaling (Phase 9 of antigravitity.file):
         // Concurrency scales up during warmup (up to maxStreams), then is frozen
         // post-warmup so the authoritative measurement window is stable.
-        if (rollingMbps > 30 && targetStreams < 4) {
+        if (rollingMbps > 25 && targetStreams < 4) {
           while (targetStreams < Math.min(4, maxStreams)) {
             uploadWorker(targetStreams++);
           }
-        } else if (rollingMbps > 120 && targetStreams < maxStreams) {
+        } else if (rollingMbps > 100 && targetStreams < maxStreams) {
           while (targetStreams < maxStreams) {
             uploadWorker(targetStreams++);
           }
@@ -285,9 +301,15 @@ export async function runUploadTest(options: UploadTestOptions): Promise<SpeedMe
   const finalTime = performance.now();
   const postWarmupBytes = Math.max(0, totalBytesTransferred - bytesAtWarmupEnd);
   const postWarmupDurationSec = Math.max(0.1, (finalTime - warmupEndTime) / 1000);
+  const totalDurationSec = Math.max(0.1, (finalTime - startTime) / 1000);
+
+  // Derive final result honestly: prioritize post-warmup window; fall back to
+  // total duration if post-warmup window transferred 0 bytes due to slow connection.
   const finalMbps =
     postWarmupBytes > 0
       ? Number(calculateSpeedMbps(postWarmupBytes, postWarmupDurationSec).toFixed(1))
+      : totalBytesTransferred > 0
+      ? Number(calculateSpeedMbps(totalBytesTransferred, totalDurationSec).toFixed(1))
       : 0;
 
   const avgLoadedLatency =
