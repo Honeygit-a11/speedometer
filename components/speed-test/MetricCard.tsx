@@ -25,14 +25,19 @@ const itemVariants: Variants = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" } },
 };
 
-export const MetricCard: React.FC<MetricCardProps> = ({
+/**
+ * Memoized so the four live metric cards don't all re-render on every high-
+ * frequency progress tick — only the active card's value changes; the others
+ * keep stable primitive props and are skipped.
+ */
+export const MetricCard: React.FC<MetricCardProps> = React.memo(function MetricCard({
   title,
   value,
   unit,
   icon: Icon,
   colorScheme,
   isActive = false,
-}) => {
+}) {
   const colorMap = {
     cyan: {
       border: isActive ? "border-cyan-500/80 shadow-lg shadow-cyan-500/20" : "border-slate-800/80",
@@ -83,4 +88,4 @@ export const MetricCard: React.FC<MetricCardProps> = ({
       </div>
     </motion.div>
   );
-};
+});

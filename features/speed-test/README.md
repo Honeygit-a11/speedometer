@@ -14,8 +14,7 @@ features/
     │   └── test-controller.ts # State machine (IDLE -> INITIALIZING -> PING -> DOWNLOAD -> UPLOAD -> RESULTS)
     │
     └── components/         # (Phase 4) React UI presentation
-        ├── SpeedMeter.tsx  # Gauge/speedometer visualizer
-        ├── SpeedDisplay.tsx# Active Mbps readout
+        ├── SpeedMeter.tsx  # Gauge/speedometer visualizer (Mbps/Gbps readout)
         ├── MetricCard.tsx  # Ping, Jitter, Download, Upload cards
         ├── Results.tsx     # Completed test overview
         └── TestControls.tsx# Start / Cancel / Retry actions

@@ -83,7 +83,7 @@
 ### Objectives
 - [x] Reactive state-driven interface (`READY` -> `INITIALIZING` -> `PING` -> `DOWNLOAD` -> `UPLOAD` -> `RESULTS`)
 - [x] Dynamic speedometer SVG circular gauge component with fluid rotation and neon glowing tracks (`SpeedMeter.tsx`)
-- [x] Digital readout with direction indicators and transferred volume (`SpeedDisplay.tsx`)
+- [x] Digital readout with direction indicators and transferred volume (in `SpeedMeter.tsx`)
 - [x] Multi-step stage progress timeline (`TestProgress.tsx`)
 - [x] Metric cards for Download, Upload, Ping, and Jitter (`MetricCard.tsx`)
 - [x] High-tier results view with connection quality assessment and "Test Again" action (`Results.tsx`)

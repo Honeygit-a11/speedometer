@@ -22,7 +22,7 @@ Browser ──fetch──▶ Cloudflare Worker
 
 - `app/` — `page.tsx` (landing hero + container), `layout.tsx` (dark theme, Header/Footer), `globals.css` (Tailwind v4 entry, glass-panel utilities, theme tokens).
 - `components/layout/` — `Header`, `Footer`.
-- `components/speed-test/` — presentation layer: `SpeedTestContainer` (binds React state to the engine singleton), `SpeedMeter` (SVG gauge), `SpeedDisplay`, `MetricCard`, `Results` (includes Advanced Diagnostics accordion), `TestProgress` (phase timeline).
+- `components/speed-test/` — presentation layer: `SpeedTestContainer` (binds React state to the engine singleton), `SpeedMeter` (SVG gauge, Mbps/Gbps readout, reduced-motion aware), `MetricCard` (memoized), `Results` (includes Advanced Diagnostics accordion), `TestProgress` (phase timeline).
 - `features/speed-test/engine/` — **headless, React-free measurement engine**. This is the core domain logic.
 - `lib/utils.ts` — `cn()`, `formatSpeed()`, `formatLatency()`.
 - `types/index.ts` — shared types (`TestPhase`, `PingMetrics`, `SpeedMetrics`, `TestResults`, `LoadedLatency`, `NetworkStability`, ...).

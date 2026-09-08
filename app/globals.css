@@ -116,3 +116,17 @@ body {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
+/* === Accessibility: honor prefers-reduced-motion (Phase 13) ===
+   Collapse infinite/decorative CSS animations for users who request
+   reduced motion. The speedometer's framer springs are handled in
+   SpeedMeter.tsx via useReducedMotion(); this covers the Tailwind
+   pulse / edge-pulse / aurora loops. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

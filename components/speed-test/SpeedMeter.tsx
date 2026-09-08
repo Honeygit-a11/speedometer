@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef } from "react";
-import { motion, useMotionValue, useSpring, useTransform } from "framer-motion";
+import { motion, useMotionValue, useReducedMotion, useSpring, useTransform } from "framer-motion";
 import { ArrowDown, ArrowUp } from "lucide-react";
 
 interface SpeedMeterProps {
@@ -49,6 +49,13 @@ export const SpeedMeter: React.FC<SpeedMeterProps> = ({
 }) => {
   const isUpload = phase === "UPLOAD_TEST";
 
+  // Respect prefers-reduced-motion: use a near-instant spring instead of a
+  // smooth glide so the needle tracks the value without smooth animation.
+  const reduceMotion = useReducedMotion();
+  const spring = reduceMotion
+    ? { stiffness: 400, damping: 40 }
+    : { stiffness: 85, damping: 15, mass: 0.7 };
+
   // Target angle based on speed
   const targetAngle = speedToAngle(currentMbps);
 
@@ -56,11 +63,7 @@ export const SpeedMeter: React.FC<SpeedMeterProps> = ({
   const targetProgress = Math.max(0, Math.min(1, (targetAngle - (-135)) / 270));
 
   // Spring-animated needle angle
-  const springAngle = useSpring(targetAngle, {
-    stiffness: 85,
-    damping: 15,
-    mass: 0.7,
-  });
+  const springAngle = useSpring(targetAngle, spring);
 
   useEffect(() => {
     springAngle.set(targetAngle);
@@ -68,11 +71,7 @@ export const SpeedMeter: React.FC<SpeedMeterProps> = ({
 
   // Spring-animated arc progress
   const motionProgress = useMotionValue(targetProgress);
-  const springProgress = useSpring(motionProgress, {
-    stiffness: 85,
-    damping: 15,
-    mass: 0.7,
-  });
+  const springProgress = useSpring(motionProgress, spring);
 
   useEffect(() => {
     motionProgress.set(targetProgress);
@@ -92,14 +91,16 @@ export const SpeedMeter: React.FC<SpeedMeterProps> = ({
     return `${activeLength} ${circumference}`;
   });
 
-  // Animated speed readout counter (formatted to 2 decimal places e.g. 100.55)
+  // Animated speed readout counter (formatted to 2 decimal places e.g. 100.55).
+  // At/above 1000 Mbps the readout switches to Gbps so gigabit connections are
+  // shown as e.g. "1.24 Gbps" rather than "1240.00 Mbps". The dial is capped at
+  // 1000 (needle pegs at max), matching the Ookla-style 0-1000 scale.
+  const showGbps = currentMbps >= 1000;
   const motionSpeed = useMotionValue(currentMbps);
-  const springSpeed = useSpring(motionSpeed, {
-    stiffness: 110,
-    damping: 18,
-    mass: 0.6,
-  });
-  const displayVal = useTransform(springSpeed, (v) => v.toFixed(2));
+  const springSpeed = useSpring(motionSpeed, spring);
+  const displayVal = useTransform(springSpeed, (v) =>
+    showGbps ? (v / 1000).toFixed(2) : v.toFixed(2)
+  );
   const speedTextRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
@@ -266,10 +267,10 @@ export const SpeedMeter: React.FC<SpeedMeterProps> = ({
           ref={speedTextRef}
           className="text-4xl sm:text-5xl md:text-6xl font-normal tracking-tight text-white drop-shadow-[0_2px_12px_rgba(0,0,0,0.8)] font-sans"
         >
-          {currentMbps.toFixed(2)}
+          {(showGbps ? currentMbps / 1000 : currentMbps).toFixed(2)}
         </span>
 
-        {/* Direction Icon + Mbps */}
+        {/* Direction Icon + Unit */}
         <div className="flex items-center gap-1.5 mt-0.5">
           <div className="w-4 h-4 rounded-full border border-purple-400/90 flex items-center justify-center text-purple-400">
             {isUpload ? (
@@ -279,7 +280,7 @@ export const SpeedMeter: React.FC<SpeedMeterProps> = ({
             )}
           </div>
           <span className="text-purple-400 font-medium text-xs sm:text-sm tracking-wide">
-            Mbps
+            {showGbps ? "Gbps" : "Mbps"}
           </span>
         </div>
 
