@@ -237,11 +237,17 @@ export async function runUploadTest(options: UploadTestOptions): Promise<SpeedMe
           }
         }
       } else {
-        // Warmup ramping only; frozen during measurement.
-        if (rollingMbps > 50 && targetStreams < 4) {
-          uploadWorker(targetStreams++);
-        } else if (rollingMbps > 200 && targetStreams < maxStreams) {
-          uploadWorker(targetStreams++);
+        // Fast.com-style geometric upload scaling (Phase 9 of antigravitity.file):
+        // Concurrency scales up during warmup (up to maxStreams), then is frozen
+        // post-warmup so the authoritative measurement window is stable.
+        if (rollingMbps > 30 && targetStreams < 4) {
+          while (targetStreams < Math.min(4, maxStreams)) {
+            uploadWorker(targetStreams++);
+          }
+        } else if (rollingMbps > 120 && targetStreams < maxStreams) {
+          while (targetStreams < maxStreams) {
+            uploadWorker(targetStreams++);
+          }
         }
       }
 

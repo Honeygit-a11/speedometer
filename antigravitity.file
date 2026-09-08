@@ -1,48 +1,123 @@
-Antigravity Implementation Plan — Speedometer Website UI & Product Improvements
-Goal
+# Full Antigravity Implementation Plan — Internet Speed Test Website
 
-Improve the existing Speedometer / Fast.com-style internet speed test website without breaking the current working speed-test engine.
+## Project Goal
 
-Focus on:
+Refine the existing **Next.js speed test website** into a complete, simple, modern, production-ready product.
 
-Better UI/UX
-Professional testing flow
-Improved results presentation
-Responsive design
-Clean architecture
-Production-ready frontend integration
+The implementation must:
 
-Do not implement Google AdSense or advertising functionality in this phase.
+* Preserve the existing real speed-test infrastructure.
+* Keep the UI simple and clean.
+* Use real LibreSpeed/backend measurements.
+* Run **download testing for approximately 7 seconds**.
+* Run **upload testing for approximately 7 seconds**.
+* Show the complete testing lifecycle.
+* Provide professional result screens.
+* Add all required website pages.
+* Improve mobile and desktop UX.
+* Avoid fake measurements or simulated results.
 
-Phase 1 — Analyze Existing Project
+---
 
-Before changing code:
+# Critical Implementation Rules
 
-Inspect the current project structure.
-Identify:
-Speed test engine
-API calls
-Railway backend integration
-LibreSpeed integration
-Current gauge/speedometer component
-State management
-Existing animations
-Preserve all currently working measurement logic.
-Identify duplicated or unnecessary frontend logic.
-Fix existing UI-related errors without changing measurement behavior.
-Rule
+Before starting development:
 
-Do not rewrite the speed test engine unless required for integration.
+1. Analyze the existing repository completely.
+2. Identify the existing speed-test engine and backend integration.
+3. Do not replace working LibreSpeed measurement logic unnecessarily.
+4. Do not create fake speed values for UI animation.
+5. Do not change the measurement backend unless required.
+6. Keep measurement logic separate from UI logic.
+7. Implement changes incrementally to avoid breaking the working application.
+8. Reuse existing components where possible.
+9. Remove duplicate or unused code only after verifying dependencies.
+10. Do not implement advertising functionality in this phase.
 
-Phase 2 — Create Clean Application Architecture
+---
 
-Separate the frontend into logical modules.
+# PHASE 1 — Existing Repository Analysis
 
+## Objective
+
+Understand the current application before modifying anything.
+
+### Analyze
+
+* Next.js version and architecture.
+* React version.
+* Current routing structure.
+* Existing components.
+* Speedometer implementation.
+* Speed-test service.
+* LibreSpeed integration.
+* Railway backend configuration.
+* Environment variables.
+* API endpoints.
+* Existing animations.
+* State management.
+* Error handling.
+* Responsive implementation.
+
+## Identify
+
+```text id="r6l3kr"
+Frontend
+    ↓
+Speed Test UI
+    ↓
+Speed Test State
+    ↓
+Measurement Service
+    ↓
+LibreSpeed Backend
+    ↓
+Railway Infrastructure
+```
+
+### Deliverable
+
+Before implementation, create an internal understanding of:
+
+* What already works.
+* What should be preserved.
+* What should be refactored.
+* What should be removed.
+* What should not be touched.
+
+---
+
+# PHASE 2 — Refine Application Architecture
+
+## Objective
+
+Create a clean separation between UI, test logic, and backend communication.
+
+Recommended structure:
+
+```text id="0b13c9"
 src/
 ├── app/
-│   ├── page
-│   ├── layout
-│   └── globals
+│   ├── page.tsx
+│   ├── layout.tsx
+│   │
+│   ├── about/
+│   │   └── page.tsx
+│   │
+│   ├── how-it-works/
+│   │   └── page.tsx
+│   │
+│   ├── faq/
+│   │   └── page.tsx
+│   │
+│   ├── contact/
+│   │   └── page.tsx
+│   │
+│   ├── privacy-policy/
+│   │   └── page.tsx
+│   │
+│   └── terms-and-conditions/
+│       └── page.tsx
 │
 ├── components/
 │   ├── layout/
@@ -50,454 +125,1039 @@ src/
 │   │   └── Footer
 │   │
 │   ├── speedtest/
-│   │   ├── SpeedTest
+│   │   ├── SpeedTestContainer
 │   │   ├── Speedometer
-│   │   ├── TestProgress
 │   │   ├── TestStatus
-│   │   ├── MetricCard
-│   │   └── TestResults
+│   │   ├── TestProgress
+│   │   ├── LiveMetrics
+│   │   ├── Results
+│   │   └── ErrorState
 │   │
 │   └── ui/
 │
 ├── hooks/
-│   └── speed-test
+│   └── useSpeedTest
 │
 ├── services/
-│   └── speed-test
+│   └── speedTestService
 │
 ├── types/
-│   └── speed-test
+│   └── speedTest
 │
-└── lib/
+├── lib/
+│
+└── config/
+    └── speedTest
+```
 
-Adapt this structure to the existing project instead of blindly moving working code.
+### Rule
 
-Phase 3 — Improve Test State Management
+Adapt this structure to the existing project. Do not blindly move files if that would break existing imports or architecture.
 
-Create a clear test lifecycle.
+---
 
+# PHASE 3 — Define the Speed Test Lifecycle
+
+Create one clear test state system.
+
+```text id="mymqxh"
 IDLE
   ↓
 CONNECTING
   ↓
 SELECTING_SERVER
   ↓
-TESTING_LATENCY
+TESTING_PING
   ↓
 TESTING_DOWNLOAD
   ↓
 TESTING_UPLOAD
   ↓
 COMPLETED
+```
 
-Also support:
+Error states:
 
+```text id="4aun1t"
 ERROR
 CANCELLED
-Requirements
+```
 
-The UI must react to the actual test state.
+## State Rules
+
+The UI must always reflect the real measurement state.
 
 Examples:
 
-Don't show upload results before upload testing begins.
-Don't show completed results while the test is running.
-Show meaningful status text.
-Prevent multiple tests from running simultaneously.
-Allow restarting after completion.
-Phase 4 — Main Speed Test UI
+### Before test
 
-Keep the existing visual identity but improve hierarchy.
+```text id="b7y0p0"
+Ready to test your internet speed
 
-Layout
+[ Start Test ]
+```
+
+### Download
+
+```text id="ft8ntd"
+Testing Download Speed
+Time remaining: 5s
+Current speed: 245 Mbps
+```
+
+### Upload
+
+```text id="x9f6w1"
+Testing Upload Speed
+Time remaining: 4s
+Current speed: 48 Mbps
+```
+
+### Completed
+
+```text id="9r6pup"
+Speed Test Complete
+```
+
+---
+
+# PHASE 4 — Configure Test Duration
+
+## Objective
+
+Configure the speed-test execution duration correctly.
+
+### Required Configuration
+
+```text id="slb8x9"
+Ping Test
+→ Use backend/default measurement configuration
+
+Download Test
+→ Approximately 7 seconds
+
+Upload Test
+→ Approximately 7 seconds
+```
+
+## Important Implementation Rule
+
+The **7-second duration must be applied to the actual measurement process**, not only to a frontend timer.
+
+Correct flow:
+
+```text id="zdb1nr"
+Backend Measurement Duration
+        ↓
+Actual Network Test
+        ↓
+Live Measurement Data
+        ↓
+Frontend UI
+        ↓
+Countdown / Progress Display
+```
+
+Incorrect implementation:
+
+```text id="ck0iyp"
+Fake 7-second UI Timer
+        ↓
+Measurement continues differently
+```
+
+### Requirements
+
+* Verify how LibreSpeed controls download duration.
+* Verify how LibreSpeed controls upload duration.
+* Configure the actual backend/client test duration.
+* Keep both download and upload tests close to 7 seconds.
+* Do not terminate the test based only on frontend animation.
+* The displayed countdown must synchronize with the actual test duration.
+
+---
+
+# PHASE 5 — Simple Homepage UI
+
+## Design Objective
+
+The homepage should be:
+
+* Minimal.
+* Modern.
+* Fast.
+* Easy to understand.
+* Focused on one primary action.
+
+Do not overload the homepage with unnecessary cards, effects, or information.
+
+---
+
+## Homepage Layout
+
+```text id="kptv3a"
 ┌─────────────────────────────────────┐
-│              HEADER                 │
+│ LOGO                        MENU    │
 ├─────────────────────────────────────┤
 │                                     │
-│       CHECK YOUR INTERNET SPEED     │
+│      Test Your Internet Speed       │
 │                                     │
-│     Fast • Accurate • Real-time     │
+│  Check your download and upload     │
+│  speed in seconds.                  │
 │                                     │
-├─────────────────────────────────────┤
 │                                     │
-│           CONNECTION STATUS         │
+│          SPEEDOMETER                │
 │                                     │
-│             SPEEDOMETER             │
 │                                     │
-│              245.67                 │
-│               Mbps                  │
-│                                     │
-│        CURRENT TEST: DOWNLOAD       │
-│                                     │
-│          [ TEST PROGRESS ]          │
+│         [ START TEST ]              │
 │                                     │
 └─────────────────────────────────────┘
-UI priorities
-Current speed value
-Current test phase
-Speedometer animation
-Progress information
-Technical details
-Phase 5 — Improve Speedometer Behavior
+```
 
-The gauge must use real measurement values.
+### Remove unnecessary UI
 
-Requirements
-No fake speed animation.
-Needle/value follows actual measured speed.
-Smooth interpolation between incoming measurements.
-Avoid visual jumping.
-Support Mbps and Gbps.
-Reset correctly before a new test.
-Stop animation when testing finishes.
-Important
+Avoid:
 
-The UI animation must not modify the actual measurement data.
+* Too many floating cards.
+* Excessive glow.
+* Too many gradients.
+* Large blocks of text.
+* Too many buttons.
+* Distracting background animations.
 
-Measurement Engine
-        ↓
-Real Speed Data
-        ↓
-UI State
-        ↓
-Smooth Visual Animation
+---
 
-The visual layer is separate from the measurement layer.
+# PHASE 6 — Header UI
 
-Phase 6 — Add Professional Test Progress
+## Desktop
 
-Show the current testing sequence visually.
+Keep the navigation simple.
 
-● Connection
-● Server
-● Ping
-◉ Download
-○ Upload
-○ Complete
-Behavior
-
-Completed stages:
-
-✓
-
-Current stage:
-
-Active animation
-
-Upcoming stages:
-
-Inactive
-
-The progress component must be driven by real test state.
-
-Phase 7 — Improve Live Metrics
-
-During testing, show live metrics.
-
-DOWNLOAD
-245.67 Mbps
-
-UPLOAD
-Testing...
-
-PING
-12 ms
-Rules
-Download updates during download testing.
-Upload updates during upload testing.
-Ping remains visible once measured.
-Don't display incorrect placeholder values.
-Clearly indicate metrics that are still being tested.
-Phase 8 — Build a Better Results Experience
-
-After completion, transition to a results view.
-
-YOUR INTERNET SPEED
-
-┌────────────────┐
-│ DOWNLOAD       │
-│ 245.67 Mbps    │
-└────────────────┘
-
-┌────────────────┐
-│ UPLOAD         │
-│ 48.21 Mbps     │
-└────────────────┘
-
-┌────────────────┐
-│ PING           │
-│ 12 ms          │
-└────────────────┘
-
-┌────────────────┐
-│ JITTER         │
-│ 3 ms           │
-└────────────────┘
-
-Include:
-
-Download speed
-Upload speed
-Ping
-Jitter, if available from the engine
-Server information
-Test completion time
-
-Actions:
-
-[ TEST AGAIN ]
-
-Do not add sharing functionality unless the existing architecture supports it cleanly.
-
-Phase 9 — Improve Error Handling UI
-
-Create user-friendly states for:
-
-Server unavailable
-Connection failure
-CORS/network failure
-Test timeout
-Backend unavailable
-Unexpected measurement failure
-
-Example:
-
-Unable to complete the speed test.
-
-The test server could not be reached.
-
-[ TRY AGAIN ]
-Requirements
-Never expose raw backend errors directly to users.
-Log technical errors safely for debugging.
-Keep error UI consistent with the main design.
-Phase 10 — Improve Header and Navigation
-
-Create a minimal modern header.
-
-Desktop
+```text id="m4f9nz"
 LOGO
 
 Speed Test
 How It Works
+FAQ
 About
 
-Theme Toggle
-Mobile
-LOGO              MENU
+[ Theme ]
+```
 
-Requirements:
+## Mobile
 
-Sticky only if it improves the existing design.
-No heavy navigation animations.
-Smooth mobile menu.
-Active navigation states.
+```text id="8zavkj"
+LOGO                     ☰
+```
 
-Do not overload the header.
+### Requirements
 
-Phase 11 — Improve Visual System
+* Responsive navigation.
+* Clear active page.
+* Accessible menu.
+* Smooth open/close transition.
+* No heavy animation.
 
-Standardize the design system.
+---
 
-Define consistent:
+# PHASE 7 — Main Speed Test Interface
 
-Typography
-Display text
-Heading
-Body
-Small labels
-Metric values
-Spacing
+The speed test interface is the main product.
 
-Use a consistent spacing scale.
+## Initial State
 
-Components
+```text id="8g3sxh"
+Your Internet Speed
+
+        [ SPEEDOMETER ]
+
+          Ready
+
+      [ Start Test ]
+```
+
+### UI Requirements
+
+* Large speedometer.
+* Clear Start Test button.
+* Minimal supporting information.
+* No metrics displayed before measurement unless necessary.
+
+---
+
+# PHASE 8 — Testing Progress UI
+
+During testing, display the current step.
+
+Example:
+
+```text id="33mdzz"
+Testing your connection
+
+✓ Connecting
+✓ Ping
+● Download
+○ Upload
+```
+
+The active stage should be clearly visible.
+
+## Testing Sequence
+
+```text id="8uhxuv"
+Connecting
+     ↓
+Ping
+     ↓
+Download — 7 seconds
+     ↓
+Upload — 7 seconds
+     ↓
+Complete
+```
+
+---
+
+# PHASE 9 — Download Test UI
+
+During download testing:
+
+```text id="2pzcn7"
+DOWNLOAD SPEED
+
+      245.67
+        Mbps
+
+Testing...
+
+████████░░░░
+
+Time remaining: 4s
+```
+
+### Requirements
+
+* Speed value updates using real measurements.
+* Speedometer updates smoothly.
+* Progress is based on actual test duration.
+* Countdown is visible but secondary.
+* Do not visually fake the speed value.
+
+---
+
+# PHASE 10 — Upload Test UI
+
+When download completes, transition cleanly to upload.
+
+```text id="wdm1o1"
+UPLOAD SPEED
+
+       48.21
+        Mbps
+
+Testing...
+
+████████░░░░
+
+Time remaining: 3s
+```
+
+### Requirements
+
+* Reset the speedometer appropriately.
+* Update using real upload measurements.
+* Run for approximately 7 seconds.
+* Maintain consistent UI with download testing.
+
+---
+
+# PHASE 11 — Ping and Latency UI
+
+Ping should be measured before download/upload.
+
+Display it simply:
+
+```text id="9bfukm"
+PING
+
+12 ms
+```
+
+Once measured, keep it available during the remaining test.
+
+Avoid giving ping more visual importance than download/upload speed.
+
+---
+
+# PHASE 12 — Live Metrics Design
+
+During testing:
+
+```text id="qfc98a"
+Ping
+12 ms
+
+Download
+245 Mbps
+
+Upload
+Testing...
+```
+
+### Rules
+
+* Measured values appear when available.
+* Future metrics show `Testing...`.
+* Do not show fake `0 Mbps` values.
+* Completed metrics remain visible.
+* Current metric receives visual emphasis.
+
+---
+
+# PHASE 13 — Final Results UI
+
+After the test completes, show a clean results screen.
+
+```text id="k32ij8"
+YOUR RESULTS
+
+Download
+245.67 Mbps
+
+Upload
+48.21 Mbps
+
+Ping
+12 ms
+
+Jitter
+3 ms
+
+[ TEST AGAIN ]
+```
+
+## Layout
+
+Desktop:
+
+```text id="7gcmzc"
+Download       Upload
+
+245 Mbps       48 Mbps
+
+Ping           Jitter
+
+12 ms           3 ms
+```
+
+Mobile:
+
+```text id="6l6x0h"
+Download
+245 Mbps
+
+Upload
+48 Mbps
+
+Ping
+12 ms
+
+Jitter
+3 ms
+```
+
+---
+
+# PHASE 14 — Test Again Flow
+
+The user should be able to restart the test.
+
+When clicked:
+
+```text id="50fg2x"
+Results
+   ↓
+Reset UI
+   ↓
+Clear temporary values
+   ↓
+Initialize new test session
+   ↓
+Start Test
+```
+
+### Requirements
+
+* No page reload required.
+* No duplicate test processes.
+* Previous network requests cleaned up.
+* Previous timers cleaned up.
+* Speedometer resets.
+* Results reset correctly.
+
+---
+
+# PHASE 15 — Error States
+
+Create simple, user-friendly error handling.
+
+## Backend Unavailable
+
+```text id="kwc3xj"
+Unable to connect to the speed test server.
+
+Please try again.
+
+[ Try Again ]
+```
+
+## Network Error
+
+```text id="dy6s46"
+Your connection changed during the test.
+
+[ Try Again ]
+```
+
+## Unexpected Error
+
+```text id="c96jxg"
+Something went wrong while testing your connection.
+
+[ Try Again ]
+```
+
+### Requirements
+
+* Never expose raw backend errors.
+* Log technical errors safely.
+* Stop active timers.
+* Clean up active requests.
+* Allow retry.
+
+---
+
+# PHASE 16 — Speedometer Refinement
+
+The speedometer should be visually clean and functional.
+
+## Requirements
+
+* Use actual speed-test measurements.
+* Smooth transitions.
+* No random movement.
+* No fake values.
+* Correct unit handling.
+* Reset between tests.
+* Stop after completion.
+
+### Data Flow
+
+```text id="w1bplx"
+Real Measurement
+      ↓
+Speed Test State
+      ↓
+Animation Layer
+      ↓
+Speedometer
+```
+
+The animation layer may smooth values but must not change the measurement result.
+
+---
+
+# PHASE 17 — Visual Design System
+
+Create a consistent visual system.
+
+## Design Direction
+
+Use:
+
+* Clean dark interface.
+* Limited glass effects.
+* Subtle borders.
+* High contrast.
+* Clear typography.
+* Consistent spacing.
+
+Avoid:
+
+* Excessive blur.
+* Neon everywhere.
+* Heavy gradients.
+* Over-animated UI.
+
+---
+
+## Typography Hierarchy
+
+```text id="tzkdun"
+Hero Title
+Large
+
+Speed Value
+Largest visual element
+
+Section Heading
+Medium
+
+Metric Label
+Small
+
+Supporting Text
+Small and subtle
+```
+
+---
+
+## Component System
 
 Standardize:
 
-Buttons
-Cards
-Status indicators
-Progress elements
-Metric displays
-Visual style
+* Buttons
+* Cards
+* Navigation links
+* Status indicators
+* Progress bars
+* Metric values
+* Error states
 
-Maintain:
+Do not create multiple different styles for the same component type.
 
-Dark interface
-Glassmorphism where appropriate
-Subtle gradients
-Controlled glow effects
-Important
+---
 
-Reduce unnecessary:
+# PHASE 18 — How It Works Page
 
-Excessive blur
-Constant glowing
-Heavy animations
-Visual noise
+Route:
 
-The speed result must remain the visual focus.
+```text id="rth1o1"
+/how-it-works
+```
 
-Phase 12 — Responsive Implementation
+Explain the real test process.
 
-Test these breakpoints:
+Layout:
 
+```text id="lhwkwu"
+How It Works
+
+1. Connect to Server
+        ↓
+2. Measure Ping
+        ↓
+3. Test Download Speed
+        ↓
+4. Test Upload Speed
+        ↓
+5. Display Results
+```
+
+Content must match the actual implementation.
+
+Do not claim technical functionality that does not exist.
+
+---
+
+# PHASE 19 — About Page
+
+Route:
+
+```text id="yecb1o"
+/about
+```
+
+Explain:
+
+* What the platform does.
+* Why the tool exists.
+* What metrics it measures.
+* Basic limitations of speed testing.
+
+Keep it simple and professional.
+
+---
+
+# PHASE 20 — FAQ Page
+
+Route:
+
+```text id="1f2uh1"
+/faq
+```
+
+Recommended questions:
+
+1. What is download speed?
+2. What is upload speed?
+3. What is ping?
+4. What is jitter?
+5. Why do results change?
+6. Why is my internet slower than expected?
+7. How accurate is the speed test?
+
+Use a clean accordion UI.
+
+---
+
+# PHASE 21 — Contact Page
+
+Route:
+
+```text id="5eiy0o"
+/contact
+```
+
+## UI
+
+```text id="nmj2ld"
+Contact Us
+
+Name
+[____________]
+
+Email
+[____________]
+
+Message
+[____________]
+
+[ Send Message ]
+```
+
+### Requirements
+
+* Client-side validation.
+* Server-side validation if backend processing exists.
+* Loading state.
+* Success state.
+* Error state.
+
+**Do not create a fake form.** Connect it to a real email or backend service before enabling submission.
+
+---
+
+# PHASE 22 — Privacy Policy
+
+Route:
+
+```text id="bsp0aa"
+/privacy-policy
+```
+
+The page must accurately describe the real application.
+
+Include only what actually exists regarding:
+
+* IP/network information.
+* Speed-test measurements.
+* Cookies.
+* Analytics.
+* Third-party services.
+* Data storage.
+* Data retention.
+
+Do not copy a generic policy that makes false claims.
+
+---
+
+# PHASE 23 — Terms and Conditions
+
+Route:
+
+```text id="cm7pwl"
+/terms-and-conditions
+```
+
+Include:
+
+* Website usage rules.
+* Service availability.
+* Test result limitations.
+* Accuracy limitations.
+* User responsibility.
+* Liability limitations.
+
+Keep it aligned with the actual product.
+
+---
+
+# PHASE 24 — Footer
+
+Create a clean global footer.
+
+```text id="uuz0q2"
+LOGO
+
+Product
+Speed Test
+How It Works
+
+Company
+About
+Contact
+
+Legal
+Privacy Policy
+Terms
+
+© Current Year
+```
+
+Footer must appear consistently across all pages.
+
+---
+
+# PHASE 25 — Responsive Design
+
+Test:
+
+```text id="4qrjyp"
 Mobile
 Tablet
 Desktop
 Large Desktop
-Mobile requirements
-Speedometer scales correctly.
-Metrics stack vertically.
-Large touch targets.
-No horizontal overflow.
-Text remains readable.
-Animation performance remains smooth.
-Desktop requirements
-Better use of horizontal space.
-Results can use grid layout.
-Speedometer remains centered.
-Supporting information stays secondary.
-Phase 13 — Animation Improvements
+```
 
-Use animation only to communicate state.
+## Mobile Requirements
 
-Implement transitions for:
+* Full-width primary button.
+* Scaled speedometer.
+* Readable metrics.
+* Vertical result layout.
+* Accessible menu.
+* No horizontal scrolling.
+* Good touch targets.
 
-Test start
-Stage changes
-Speed value updates
-Result completion
-Error appearance
+## Desktop Requirements
 
-Avoid:
+* Centered speed test.
+* Controlled maximum content width.
+* Balanced whitespace.
+* Grid-based results.
 
-Infinite decorative animations.
-Heavy background effects.
-Animations that reduce speed-test performance.
+---
 
-Respect reduced-motion preferences where possible.
-
-Phase 14 — Performance Optimization
-
-Optimize the frontend because the website itself must remain fast.
+# PHASE 26 — Accessibility
 
 Check:
 
-Unnecessary re-renders.
-Excessive state updates.
-Animation frame performance.
-Heavy dependencies.
-Unoptimized SVGs.
-Large assets.
-Memory leaks during repeated tests.
-Important
+* Keyboard navigation.
+* Focus states.
+* Button labels.
+* Form labels.
+* Color contrast.
+* Reduced motion preference.
+* Screen reader compatibility.
 
-The speedometer UI must not consume significant resources during testing because it could affect the user's measured network/device performance.
+The speed test must remain usable without relying only on color or animation.
 
-Phase 15 — Integration Rules
+---
 
-The frontend must integrate with the existing Railway/LibreSpeed backend.
+# PHASE 27 — Performance Optimization
 
-Requirements:
+The frontend must not interfere significantly with speed measurements.
 
-Use the configured backend base URL.
-Centralize API configuration.
-Do not hardcode localhost URLs in production code.
-Handle development and production environments separately.
-Preserve existing CORS-compatible endpoints.
-Do not duplicate speed-test requests.
-Ensure only one active measurement session at a time.
-Phase 16 — Validation and Testing
+## Check
+
+* Unnecessary React renders.
+* Heavy animations.
+* Large dependencies.
+* Memory leaks.
+* Duplicate API calls.
+* Multiple active timers.
+* Large images.
+* Excessive background effects.
+
+### Important
+
+```text id="zc6kx4"
+Speed Test Running
+        ↓
+Frontend Must Stay Lightweight
+        ↓
+Avoid Affecting Device Performance
+```
+
+---
+
+# PHASE 28 — Backend Integration Validation
+
+Verify:
+
+```text id="o6w4ry"
+Next.js Frontend
+        ↓
+Speed Test Service
+        ↓
+LibreSpeed Client/API
+        ↓
+Railway Backend
+```
+
+Check:
+
+* Production backend URL.
+* Environment variables.
+* CORS.
+* HTTPS.
+* Timeout behavior.
+* Error responses.
+* Server availability.
+* No localhost production configuration.
+
+---
+
+# PHASE 29 — Security Review
+
+Audit:
+
+* Exposed environment variables.
+* API keys.
+* Public/private environment configuration.
+* CORS.
+* Rate limiting.
+* Input validation.
+* Contact form abuse.
+* Error message exposure.
+* Sensitive logging.
+
+Do not expose backend infrastructure details to the client unnecessarily.
+
+---
+
+# PHASE 30 — Complete Testing
 
 Test the complete lifecycle:
 
-Initial Load
+```text id="k79mbo"
+Load Website
     ↓
 Start Test
     ↓
 Connect
     ↓
-Server Selection
-    ↓
 Ping
     ↓
-Download
+Download ~7 Seconds
     ↓
-Upload
+Upload ~7 Seconds
     ↓
 Results
     ↓
 Test Again
+```
 
 Also test:
 
-Slow connections.
-Backend failures.
-Mobile devices.
-Repeated tests.
-Page refresh during test.
-Network interruption.
-Railway deployment.
-Phase 17 — Final Code Quality Pass
+* Slow internet.
+* Fast internet.
+* Mobile networks.
+* Backend unavailable.
+* Connection interruption.
+* Repeated testing.
+* Refresh during test.
+* Mobile devices.
+* Production Railway deployment.
 
-Before completing:
+---
 
-Check
-No unused components.
-No duplicated logic.
-No fake metrics.
-No hardcoded production URLs.
-No exposed secrets.
-No unnecessary API calls.
-No console errors.
-No broken TypeScript types.
-No hydration errors.
-No mobile overflow.
-No UI regression.
-Execution Priority
+# PHASE 31 — Final Quality Audit
 
-Antigravity should implement in this order:
+Before completion, verify:
 
+### Functionality
+
+```text id="b6s9w9"
+[ ] Real speed measurements
+[ ] Ping works
+[ ] Download works
+[ ] Upload works
+[ ] Download duration ≈ 7 seconds
+[ ] Upload duration ≈ 7 seconds
+[ ] Results are accurate
+[ ] Test Again works
+```
+
+### UI
+
+```text id="ovfb0j"
+[ ] Simple interface
+[ ] No unnecessary UI elements
+[ ] Responsive
+[ ] Consistent spacing
+[ ] Clean typography
+[ ] Speed value is visually prominent
+[ ] Error states work
+```
+
+### Website
+
+```text id="bxuvuj"
+[ ] Home
+[ ] About
+[ ] How It Works
+[ ] FAQ
+[ ] Contact
+[ ] Privacy Policy
+[ ] Terms
+```
+
+### Technical
+
+```text id="w5t9i8"
+[ ] No console errors
+[ ] No TypeScript errors
+[ ] No broken routes
+[ ] No hydration errors
+[ ] No duplicate requests
+[ ] No memory leaks
+[ ] Production environment works
+```
+
+---
+
+# Final Execution Order for Antigravity
+
+```text id="kwd39j"
 PHASE 1
-Analyze existing project
+Repository Analysis
         ↓
 PHASE 2
-Clean architecture
+Architecture Refinement
         ↓
 PHASE 3
-Test state lifecycle
+Speed Test State Lifecycle
         ↓
 PHASE 4
-Main UI structure
+Configure Actual 7-Second Tests
         ↓
-PHASE 5
-Real-time speedometer integration
+PHASE 5–7
+Homepage + Core Speed Test UI
         ↓
-PHASE 6
-Test progress
+PHASE 8–12
+Progress + Download + Upload + Metrics
         ↓
-PHASE 7
-Live metrics
-        ↓
-PHASE 8
-Results UI
-        ↓
-PHASE 9
-Error handling
-        ↓
-PHASE 10–13
-Visual, responsive, animation improvements
-        ↓
-PHASE 14
-Performance optimization
-        ↓
-PHASE 15
-Backend integration verification
+PHASE 13–15
+Results + Restart + Errors
         ↓
 PHASE 16–17
-Testing and final quality audit
-Critical Rule for Antigravity
+Speedometer + Visual System
+        ↓
+PHASE 18–24
+All Website Pages + Navigation + Footer
+        ↓
+PHASE 25–27
+Responsive + Accessibility + Performance
+        ↓
+PHASE 28–29
+Backend + Security Validation
+        ↓
+PHASE 30–31
+Testing + Final Quality Audit
+```
 
-First understand the existing repository and working speed-test implementation. Then improve the architecture and UI incrementally. Do not replace working LibreSpeed/Railway measurement logic with simulated or fake speed-test logic. Preserve real measurements and make the UI react to the actual testing lifecycle.
+## Final Critical Requirement
+
+**The implementation must configure the actual network measurement process so download and upload testing each run for approximately 7 seconds. Antigravity must verify the existing LibreSpeed configuration and apply the duration at the correct measurement layer—not merely display a 7-second frontend timer. The UI must remain simple, lightweight, and driven entirely by real test states and real measurement data.**

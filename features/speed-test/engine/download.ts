@@ -68,7 +68,7 @@ export async function runDownloadTest(options: DownloadTestOptions): Promise<Spe
     minDurationMs = 4000,
     warmupMs = 1500,
     initialStreams = 2,
-    maxStreams = 8,
+    maxStreams = 16,
     stabilityThreshold = 0.25,
     stableDurationMs = 1500,
     minSampleCount = 12,
@@ -234,12 +234,21 @@ export async function runDownloadTest(options: DownloadTestOptions): Promise<Spe
           }
         }
       } else {
-        // Warmup phase: ramp concurrency up to fit the link. Frozen post-warmup
-        // so the measurement window has a single, stable concurrency level.
-        if (rollingMbps > 40 && targetStreams < 4) {
-          streamWorker(targetStreams++);
-        } else if (rollingMbps > 150 && targetStreams < maxStreams) {
-          streamWorker(targetStreams++);
+        // Fast.com-style geometric connection scaling (Phase 5 of antigravitity.file):
+        // 2 -> 4 -> 8 -> 16. Concurrency scales up to saturate the pipe during warmup,
+        // then is frozen post-warmup to ensure a single, stable concurrency baseline.
+        if (rollingMbps > 30 && targetStreams < 4) {
+          while (targetStreams < Math.min(4, maxStreams)) {
+            streamWorker(targetStreams++);
+          }
+        } else if (rollingMbps > 120 && targetStreams < 8) {
+          while (targetStreams < Math.min(8, maxStreams)) {
+            streamWorker(targetStreams++);
+          }
+        } else if (rollingMbps > 350 && targetStreams < maxStreams) {
+          while (targetStreams < maxStreams) {
+            streamWorker(targetStreams++);
+          }
         }
       }
 
