@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { Mail, MessageSquare, Send, CheckCircle2, Globe2, Server } from "lucide-react";
+import { PageHeader } from "@/components/ui";
 
 export default function ContactPage() {
   const [submitted, setSubmitted] = useState(false);
@@ -20,19 +21,12 @@ export default function ContactPage() {
   return (
     <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 py-12 sm:py-16 space-y-16">
       {/* Header */}
-      <section className="text-center space-y-4 max-w-3xl mx-auto">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-950/60 border border-cyan-800/60 text-cyan-400 text-xs font-semibold uppercase tracking-wider">
-          <Mail className="w-3.5 h-3.5" />
-          <span>Get in Touch</span>
-        </div>
-        <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-white">
-          Contact & Network Inquiries
-        </h1>
-        <p className="text-base sm:text-lg text-slate-400 leading-relaxed">
-          Have feedback on your test results, want to host an edge test server, or report an issue?
-          We would love to hear from you.
-        </p>
-      </section>
+      <PageHeader
+        icon={Mail}
+        badge="Get in Touch"
+        title="Contact & Network Inquiries"
+        description="Have feedback on your test results, want to host an edge test server, or report an issue? We would love to hear from you."
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Contact Info Cards */}

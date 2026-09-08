@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Zap, ShieldCheck, Cpu, Globe2, ArrowRight, Gauge, Activity, Server } from "lucide-react";
+import { PageHeader } from "@/components/ui";
 
 export const metadata: Metadata = {
   title: "About SpeedPulse — Independent Internet Speed & Quality Testing",
@@ -12,20 +13,12 @@ export default function AboutPage() {
   return (
     <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 py-12 sm:py-16 space-y-16">
       {/* Hero Section */}
-      <section className="text-center space-y-4 max-w-3xl mx-auto">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-950/60 border border-cyan-800/60 text-cyan-400 text-xs font-semibold uppercase tracking-wider">
-          <Zap className="w-3.5 h-3.5" />
-          <span>Our Mission</span>
-        </div>
-        <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-white">
-          Honest, Ad-Free Speed Testing for the Modern Web
-        </h1>
-        <p className="text-base sm:text-lg text-slate-400 leading-relaxed">
-          SpeedPulse was created to solve a widespread problem in internet measurement: bloated,
-          ad-saturated test tools that report artificially inflated peak bursts rather than
-          actual, sustained network capacity.
-        </p>
-      </section>
+      <PageHeader
+        icon={Zap}
+        badge="Our Mission"
+        title="Honest, Ad-Free Speed Testing for the Modern Web"
+        description="SpeedPulse was created to solve a widespread problem in internet measurement: bloated, ad-saturated test tools that report artificially inflated peak bursts rather than actual, sustained network capacity."
+      />
 
       {/* Core Pillars Grid */}
       <section className="grid grid-cols-1 md:grid-cols-3 gap-6">

@@ -1,4 +1,4 @@
-import { buildGetIpUrl } from "./server-endpoints";
+import { buildGetIpUrl, fetchWithTimeout } from "./server-endpoints";
 
 /**
  * Client identity surfaced Fast.com-style (public IP / ISP / region). Purely
@@ -23,24 +23,13 @@ export async function fetchClientIdentity(
   signal?: AbortSignal
 ): Promise<ClientIdentity | null> {
   try {
-    const timeoutController = new AbortController();
-    const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
-    const onExternalAbort = () => timeoutController.abort();
-    signal?.addEventListener("abort", onExternalAbort, { once: true });
-
-    try {
-      const res = await fetch(buildGetIpUrl(baseUrl), {
-        cache: "no-store",
-        signal: timeoutController.signal,
-      });
-      if (!res.ok) return null;
-      const data = (await res.json()) as ClientIdentity;
-      if (!data.ip) return EMPTY;
-      return data;
-    } finally {
-      clearTimeout(timeoutId);
-      signal?.removeEventListener("abort", onExternalAbort);
-    }
+    const res = await fetchWithTimeout(buildGetIpUrl(baseUrl), timeoutMs, signal, {
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as ClientIdentity;
+    if (!data.ip) return EMPTY;
+    return data;
   } catch {
     return null;
   }

@@ -7,6 +7,29 @@ export interface ServerEndpointInfo {
   backend?: ServerBackend;
 }
 
+/**
+ * Fetch with an independent per-request timeout. The timeout's AbortController
+ * is separate from the caller's external `signal`: either the timeout or an
+ * external abort can cancel the request, and cleanup is always performed.
+ */
+export async function fetchWithTimeout(
+  url: string | URL,
+  timeoutMs: number,
+  signal?: AbortSignal,
+  init?: RequestInit
+): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  const onExternalAbort = () => controller.abort();
+  signal?.addEventListener("abort", onExternalAbort, { once: true });
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(id);
+    signal?.removeEventListener("abort", onExternalAbort);
+  }
+}
+
 export function isLoopbackUrl(baseUrl: string): boolean {
   try {
     const hostname = new URL(baseUrl).hostname.toLowerCase();

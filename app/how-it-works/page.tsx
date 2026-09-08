@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight, Activity, Download, Upload, Cpu, ShieldAlert, CheckCircle2, Server } from "lucide-react";
+import { PageHeader } from "@/components/ui";
 
 export const metadata: Metadata = {
   title: "How It Works — SpeedPulse Measurement Engine",
@@ -60,19 +61,13 @@ export default function HowItWorksPage() {
   return (
     <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 py-12 sm:py-16 space-y-16">
       {/* Header */}
-      <section className="text-center space-y-4 max-w-3xl mx-auto">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-950/60 border border-blue-800/60 text-blue-400 text-xs font-semibold uppercase tracking-wider">
-          <Cpu className="w-3.5 h-3.5" />
-          <span>Measurement Engineering</span>
-        </div>
-        <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-white">
-          How SpeedPulse Measures Network Performance
-        </h1>
-        <p className="text-base sm:text-lg text-slate-400 leading-relaxed">
-          SpeedPulse does not rely on synthetic animations or flash bursts. Learn how our headless
-          engine measures real TCP throughput, packet latency, and bufferbloat.
-        </p>
-      </section>
+      <PageHeader
+        icon={Cpu}
+        tone="blue"
+        badge="Measurement Engineering"
+        title="How SpeedPulse Measures Network Performance"
+        description="SpeedPulse does not rely on synthetic animations or flash bursts. Learn how our headless engine measures real TCP throughput, packet latency, and bufferbloat."
+      />
 
       {/* Measurement Pipeline Timeline */}
       <section className="space-y-8">

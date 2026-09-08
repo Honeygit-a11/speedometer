@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { ShieldCheck, Lock, EyeOff, Server, CheckCircle2 } from "lucide-react";
+import { Lock, EyeOff, Server, CheckCircle2, ShieldCheck } from "lucide-react";
+import { PageHeader } from "@/components/ui";
 
 export const metadata: Metadata = {
   title: "Privacy Policy — SpeedPulse Zero-Retention Commitment",
@@ -11,18 +12,14 @@ export default function PrivacyPolicyPage() {
   return (
     <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-12 sm:py-16 space-y-12">
       {/* Header */}
-      <section className="space-y-4">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-950/60 border border-emerald-800/60 text-emerald-400 text-xs font-semibold uppercase tracking-wider">
-          <ShieldCheck className="w-3.5 h-3.5" />
-          <span>Zero-Retention Privacy</span>
-        </div>
-        <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-white">
-          Privacy Policy
-        </h1>
-        <p className="text-sm text-slate-400">
-          Last Updated: March 2026 · Effective Immediately
-        </p>
-      </section>
+      <PageHeader
+        icon={ShieldCheck}
+        tone="emerald"
+        center={false}
+        badge="Zero-Retention Privacy"
+        title="Privacy Policy"
+        description="Last Updated: March 2026 · Effective Immediately"
+      />
 
       {/* Summary Highlights */}
       <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">

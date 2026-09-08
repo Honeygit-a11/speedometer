@@ -53,30 +53,37 @@ export const TestProgress: React.FC<TestProgressProps> = ({ phase }) => {
     },
   ];
 
-  // Compute how far the fill line should extend (0 → 1 across the gap width)
+  // Fill reaches the center of each completed step, then advances halfway toward
+  // the next in-progress step. Derived from the `steps` array so the fill bar and
+  // the step highlighting can never drift apart, and it never extends past an
+  // active-but-incomplete step (no progress → fill 0).
   const completedCount = steps.filter((s) => s.isCompleted).length;
-  const activeCount = steps.findIndex((s) => s.isActive);
-  // Fill = fully completed steps + partial fill toward the active one
-  const fillProgress = completedCount > 0
-    ? (completedCount - (activeCount >= 0 && steps[activeCount].isActive && !steps[activeCount].isCompleted ? 0.5 : 0)) / (steps.length - 1)
-    : 0;
+  const activeIdx = steps.findIndex((s) => s.isActive);
+  const activeIncomplete = activeIdx >= 0 && !steps[activeIdx].isCompleted;
+  const fillProgress = Math.min(
+    1,
+    Math.max(0, (completedCount - (activeIncomplete ? 0.5 : 0)) / (steps.length - 1))
+  );
 
   return (
     <div className="w-full max-w-xl mx-auto py-2">
       <div className="flex items-center justify-between relative">
-        {/* Connecting Line Track */}
-        <div className="absolute top-1/2 left-4 right-4 h-0.5 bg-slate-800 -translate-y-1/2 -z-0" />
+        {/* Connecting Line Track — spans strictly from the center of the first circle (18px) to the center of the last (18px from right) */}
+        <div className="absolute top-[18px] left-[18px] right-[18px] h-0.5 -translate-y-1/2 z-0 overflow-hidden rounded-full">
+          {/* Inactive Track */}
+          <div className="w-full h-full bg-slate-800 rounded-full" />
 
-        {/* Animated Fill Line */}
-        <motion.div
-          className="absolute top-1/2 left-4 h-0.5 -translate-y-1/2 -z-0 origin-left"
-          style={{
-            background: "linear-gradient(90deg, #10b981, #06b6d4, #c084fc)",
-          }}
-          initial={{ width: "0%" }}
-          animate={{ width: `${fillProgress * 100}%` }}
-          transition={{ type: "spring", stiffness: 80, damping: 20, mass: 0.8 }}
-        />
+          {/* Animated Fill Line */}
+          <motion.div
+            className="absolute top-0 left-0 h-full rounded-full origin-left"
+            style={{
+              background: "linear-gradient(90deg, #10b981, #06b6d4, #a855f7)",
+            }}
+            initial={{ width: "0%" }}
+            animate={{ width: `${fillProgress * 100}%` }}
+            transition={{ type: "spring", stiffness: 80, damping: 20, mass: 0.8 }}
+          />
+        </div>
 
         {steps.map((step) => {
           const Icon = step.icon;

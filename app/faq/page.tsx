@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { HelpCircle, ArrowRight, ChevronDown } from "lucide-react";
+import { HelpCircle, ArrowRight } from "lucide-react";
+import { PageHeader } from "@/components/ui";
 
 export const metadata: Metadata = {
   title: "Frequently Asked Questions — SpeedPulse",
@@ -66,19 +67,12 @@ export default function FaqPage() {
   return (
     <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 py-12 sm:py-16 space-y-16">
       {/* Hero Header */}
-      <section className="text-center space-y-4 max-w-3xl mx-auto">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-950/60 border border-cyan-800/60 text-cyan-400 text-xs font-semibold uppercase tracking-wider">
-          <HelpCircle className="w-3.5 h-3.5" />
-          <span>Knowledge Base</span>
-        </div>
-        <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-white">
-          Frequently Asked Questions
-        </h1>
-        <p className="text-base sm:text-lg text-slate-400 leading-relaxed">
-          Everything you need to know about understanding your internet speed test results,
-          troubleshooting connection lag, and how SpeedPulse operates.
-        </p>
-      </section>
+      <PageHeader
+        icon={HelpCircle}
+        badge="Knowledge Base"
+        title="Frequently Asked Questions"
+        description="Everything you need to know about understanding your internet speed test results, troubleshooting connection lag, and how SpeedPulse operates."
+      />
 
       {/* FAQ Categories */}
       <section className="space-y-12">

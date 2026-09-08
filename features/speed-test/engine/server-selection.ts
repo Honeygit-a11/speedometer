@@ -2,7 +2,7 @@ import {
   SpeedTestServer,
   ServerSelectionResult,
 } from "./server-registry";
-import { buildHealthUrl, buildPingUrl, detectServerBackend } from "./server-endpoints";
+import { buildHealthUrl, buildPingUrl, detectServerBackend, fetchWithTimeout } from "./server-endpoints";
 
 export type { ServerSelectionResult };
 
@@ -29,25 +29,14 @@ export async function checkServerHealth(
     return { server, healthy: true, latencyMs: 0 };
   }
 
-  const timeoutController = new AbortController();
-  const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
-  const onExternalAbort = () => timeoutController.abort();
-  signal?.addEventListener("abort", onExternalAbort, { once: true });
-
   try {
     const start = performance.now();
-    const res = await fetch(healthUrl, {
-      cache: "no-store",
-      signal: timeoutController.signal,
-    });
+    const res = await fetchWithTimeout(healthUrl, timeoutMs, signal, { cache: "no-store" });
     if (!res.ok) return { server, healthy: false, latencyMs: Infinity };
     await res.text();
     return { server, healthy: true, latencyMs: performance.now() - start };
   } catch {
     return { server, healthy: false, latencyMs: Infinity };
-  } finally {
-    clearTimeout(timeoutId);
-    signal?.removeEventListener("abort", onExternalAbort);
   }
 }
 
@@ -101,27 +90,20 @@ export async function probeServerLatency(
       throw new DOMException("Server selection aborted", "AbortError");
     }
 
-    // Per-probe timeout so a hanging server doesn't stall discovery.
-    const timeoutController = new AbortController();
-    const timeoutId = setTimeout(() => timeoutController.abort(), probeTimeoutMs);
-    const onExternalAbort = () => timeoutController.abort();
-    signal?.addEventListener("abort", onExternalAbort, { once: true });
-
     const start = performance.now();
     try {
-      const res = await fetch(`${pingBaseUrl}?_t=${Date.now()}_${i}`, {
-        cache: "no-store",
-        signal: timeoutController.signal,
-      });
+      const res = await fetchWithTimeout(
+        `${pingBaseUrl}?_t=${Date.now()}_${i}`,
+        probeTimeoutMs,
+        signal,
+        { cache: "no-store" }
+      );
       if (res.ok) {
         await res.text();
         samples.push(performance.now() - start);
       }
     } catch {
       // A single failed probe is tolerated; only a full sweep marks the server dead.
-    } finally {
-      clearTimeout(timeoutId);
-      signal?.removeEventListener("abort", onExternalAbort);
     }
 
     if (i < probeCount - 1 && delayBetweenMs > 0) {

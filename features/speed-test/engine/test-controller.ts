@@ -474,12 +474,7 @@ export class SpeedTestController {
         throw new DOMException("Speed test aborted by user", "AbortError");
       }
 
-      const errorMessage = lastFailure?.message || "Speed test failed against all test servers";
-      this.updateState({
-        phase: classifyError(lastFailure ?? new Error(errorMessage)),
-        error: errorMessage,
-      });
-      throw lastFailure ?? new Error(errorMessage);
+      throw lastFailure ?? new Error("Speed test failed against all test servers");
     } catch (err: unknown) {
       this.isRunning = false;
       this.abortController = null;

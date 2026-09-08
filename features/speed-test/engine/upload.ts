@@ -115,59 +115,55 @@ export async function runUploadTest(options: UploadTestOptions): Promise<SpeedMe
 
   async function uploadWorker(streamId: number) {
     let consecutiveErrors = 0;
-    try {
-      while (!internalController.signal.aborted) {
-        const remainingTime = maxDurationMs - (performance.now() - startTime);
-        if (remainingTime <= 0) break;
+    while (!internalController.signal.aborted) {
+      const remainingTime = maxDurationMs - (performance.now() - startTime);
+      if (remainingTime <= 0) break;
 
-        // Use dynamically sized chunk based on current throughput
-        const payload = selectUploadChunk(currentSmoothedMbps);
-        const expectedBytes = payload.byteLength;
+      // Use dynamically sized chunk based on current throughput
+      const payload = selectUploadChunk(currentSmoothedMbps);
+      const expectedBytes = payload.byteLength;
 
-        try {
-          const res = await fetch(buildUploadUrl(workerUrl, backend, streamId), {
-            method: "POST",
-            headers: { "Content-Type": "application/octet-stream" },
-            body: payload as unknown as BodyInit,
-            cache: "no-store",
-            signal: internalController.signal,
-          });
+      try {
+        const res = await fetch(buildUploadUrl(workerUrl, backend, streamId), {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: payload as unknown as BodyInit,
+          cache: "no-store",
+          signal: internalController.signal,
+        });
 
-          if (!res.ok) {
-            consecutiveErrors++;
-            if (consecutiveErrors >= 3) break;
-            await new Promise((r) => setTimeout(r, 50));
-            continue;
-          }
-
-          consecutiveErrors = 0;
-
-          // Authoritative byte count: read server confirmation if available
-          let confirmedBytes = expectedBytes;
-          try {
-            const json = (await res.json()) as { bytesReceived?: number };
-            if (typeof json.bytesReceived === "number" && json.bytesReceived >= 0) {
-              confirmedBytes = json.bytesReceived;
-            }
-          } catch {
-            // Server returned 200 OK without JSON body (valid for /empty POST sink)
-          }
-
-          totalBytesTransferred += confirmedBytes;
-        } catch (err: unknown) {
-          if ((err as Error)?.name === "AbortError" || internalController.signal.aborted) {
-            break;
-          }
+        if (!res.ok) {
           consecutiveErrors++;
-          if (consecutiveErrors >= 3) {
-            console.warn(`[SpeedTest Engine] Upload stream #${streamId} stopped after errors:`, err);
-            break;
-          }
+          if (consecutiveErrors >= 3) break;
           await new Promise((r) => setTimeout(r, 50));
+          continue;
         }
+
+        consecutiveErrors = 0;
+
+        // Authoritative byte count: read server confirmation if available
+        let confirmedBytes = expectedBytes;
+        try {
+          const json = (await res.json()) as { bytesReceived?: number };
+          if (typeof json.bytesReceived === "number" && json.bytesReceived >= 0) {
+            confirmedBytes = json.bytesReceived;
+          }
+        } catch {
+          // Server returned 200 OK without JSON body (valid for /empty POST sink)
+        }
+
+        totalBytesTransferred += confirmedBytes;
+      } catch (err: unknown) {
+        if ((err as Error)?.name === "AbortError" || internalController.signal.aborted) {
+          break;
+        }
+        consecutiveErrors++;
+        if (consecutiveErrors >= 3) {
+          console.warn(`[SpeedTest Engine] Upload stream #${streamId} stopped after errors:`, err);
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 50));
       }
-    } finally {
-      // Stream exited
     }
   }
 

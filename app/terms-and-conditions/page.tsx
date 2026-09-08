@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { FileText, CheckCircle2, AlertTriangle } from "lucide-react";
+import { PageHeader } from "@/components/ui";
 
 export const metadata: Metadata = {
   title: "Terms and Conditions — SpeedPulse",
@@ -11,18 +12,13 @@ export default function TermsPage() {
   return (
     <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-12 sm:py-16 space-y-12">
       {/* Header */}
-      <section className="space-y-4">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-950/60 border border-cyan-800/60 text-cyan-400 text-xs font-semibold uppercase tracking-wider">
-          <FileText className="w-3.5 h-3.5" />
-          <span>Legal Agreement</span>
-        </div>
-        <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-white">
-          Terms & Conditions
-        </h1>
-        <p className="text-sm text-slate-400">
-          Last Updated: March 2026 · Please read these terms carefully before using SpeedPulse.
-        </p>
-      </section>
+      <PageHeader
+        icon={FileText}
+        center={false}
+        badge="Legal Agreement"
+        title="Terms & Conditions"
+        description="Last Updated: March 2026 · Please read these terms carefully before using SpeedPulse."
+      />
 
       {/* Notice Card */}
       <section className="glass-panel p-6 rounded-2xl border border-yellow-800/40 bg-yellow-950/10 flex items-start gap-4">

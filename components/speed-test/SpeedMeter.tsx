@@ -42,6 +42,15 @@ function speedToAngle(speed: number): number {
   return 135;
 }
 
+// Tick positions are pure geometry — compute once at module load, not per render.
+const TICK_RADIUS = 93;
+const CX = 170;
+const CY = 170;
+const TICKS = SCALE_POINTS.map((pt) => {
+  const rad = (pt.angle * Math.PI) / 180;
+  return { ...pt, x: CX + TICK_RADIUS * Math.sin(rad), y: CY - TICK_RADIUS * Math.cos(rad) };
+});
+
 export const SpeedMeter: React.FC<SpeedMeterProps> = ({
   currentMbps,
   phase = "DOWNLOAD_TEST",
@@ -116,15 +125,11 @@ export const SpeedMeter: React.FC<SpeedMeterProps> = ({
     return unsub;
   }, [displayVal]);
 
-  // Pre-calculate tick positions (inner radius = 93)
-  const tickRadius = 93;
-  const ticks = SCALE_POINTS.map((pt) => {
-    const rad = (pt.angle * Math.PI) / 180;
-    const x = cx + tickRadius * Math.sin(rad);
-    const y = cy - tickRadius * Math.cos(rad);
-    const isActive = currentMbps >= pt.speed || (pt.speed === 100 && currentMbps >= 95);
-    return { ...pt, x, y, isActive };
-  });
+  // Derive per-tick active state from current speed (positions are pre-computed at module scope).
+  const ticks = TICKS.map((t) => ({
+    ...t,
+    isActive: currentMbps >= t.speed || (t.speed === 100 && currentMbps >= 95),
+  }));
 
   const transferredMB = (bytesTransferred / (1024 * 1024)).toFixed(1);
 

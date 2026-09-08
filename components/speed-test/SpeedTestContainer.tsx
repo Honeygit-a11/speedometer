@@ -13,6 +13,19 @@ import { formatLatency, formatSpeed } from "@/lib/utils";
 import { Aurora } from "@/components/ui";
 import { isLoopbackUrl } from "@/features/speed-test/engine/server-endpoints";
 
+const SELECTION_PHASES = ["INITIALIZING", "DISCOVERING_SERVERS", "PROBING_SERVERS", "SELECTING_SERVER"];
+
+const TESTING_PHASES = [
+  "INITIALIZING",
+  "DISCOVERING_SERVERS",
+  "PROBING_SERVERS",
+  "SELECTING_SERVER",
+  "PING_TEST",
+  "DOWNLOAD_TEST",
+  "UPLOAD_TEST",
+  "PROCESS_RESULTS",
+];
+
 const phaseVariants = {
   initial: { opacity: 0, scale: 0.95, y: 10 },
   animate: { opacity: 1, scale: 1, y: 0 },
@@ -54,18 +67,7 @@ export const SpeedTestContainer: React.FC = () => {
     speedTestController.reset();
   }, []);
 
-  const SELECTION_PHASES = ["INITIALIZING", "DISCOVERING_SERVERS", "PROBING_SERVERS", "SELECTING_SERVER"];
-
-const isTesting = [
-    "INITIALIZING",
-    "DISCOVERING_SERVERS",
-    "PROBING_SERVERS",
-    "SELECTING_SERVER",
-    "PING_TEST",
-    "DOWNLOAD_TEST",
-    "UPLOAD_TEST",
-    "PROCESS_RESULTS",
-  ].includes(state.phase);
+  const isTesting = TESTING_PHASES.includes(state.phase);
 
   const isTerminalError = [
     "ERROR",
