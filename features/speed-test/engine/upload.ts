@@ -1,63 +1,93 @@
-import { SpeedMetrics } from "@/types";
+import {
+  SpeedMetrics,
+  RawTransferMetrics,
+  RawMeasurementSample,
+} from "@/types";
 import {
   calculateSpeedMbps,
   calculateEMA,
   RollingThroughputTracker,
+  isThroughputStable,
 } from "./calculations";
+import {
+  buildPingUrl,
+  buildUploadUrl,
+  detectServerBackend,
+  type ServerBackend,
+} from "./server-endpoints";
+import type { SpeedTestServer } from "./server-registry";
 
 export interface UploadTestOptions {
   workerUrl: string;
-  durationMs?: number;       // Total duration (default 8000ms)
-  warmupMs?: number;         // Initial warm-up window to discard (default 1500ms)
-  initialStreams?: number;   // Initial parallel upload connections (default 3)
-  maxStreams?: number;       // Maximum parallel upload connections (default 6)
-  payloadChunkSize?: number; // Soft per-request byte target (default 4MB)
+  backend?: ServerBackend;
+  server?: SpeedTestServer;
+  /** Hard cap on total test duration (default 8000ms). */
+  maxDurationMs?: number;
+  /** Minimum duration before early termination is allowed (default 4000ms). */
+  minDurationMs?: number;
+  /** Connection ramp-up window to discard (default 1500ms). */
+  warmupMs?: number;
+  initialStreams?: number;
+  maxStreams?: number;
+  /** Soft per-request byte target; smaller = finer boundary accounting. */
+  payloadChunkSize?: number;
+  stabilityThreshold?: number;
+  stableDurationMs?: number;
+  minSampleCount?: number;
   signal?: AbortSignal;
   onProgress?: (metrics: { currentMbps: number; bytesTransferred: number; elapsedMs: number; progress: number }) => void;
 }
 
-// 128KB chunk handed to the transport per pull. Small enough that even a slow
-// link (a few hundred KB/s) sees frequent progress; reused so we never allocate
-// a full request-sized payload.
-const SEND_CHUNK_SIZE = 128 * 1024;
-let sendBuffer: Uint8Array | null = null;
-
 /**
- * Multi-connection upload speed measurement.
+ * Multi-connection upload measurement.
  *
- * Measures bytes handed to the transport via a streaming request body — the
- * ReadableStream `pull()` is backpressure-driven, so the byte count grows exactly
- * as fast as the network consumes the payload. This fixes the previous
- * whole-chunk-counting bug where a slow connection (chunk outlives the test)
- * never completed a request and reported 0 Mbps. Bytes are credited incrementally,
- * including partial (in-flight) bytes when the test ends mid-request.
+ * Accuracy rules:
+ *  - Only bytes the SERVER confirms it received are counted (via the /upload
+ *    response's `bytesReceived`). Data handed to the browser transport but not
+ *    delivered is NOT credited — the client's tally is anchored to the server's.
+ *  - Requests aborted mid-flight at test end are NOT credited (unconfirmed
+ *    bytes would otherwise inflate the result).
+ *  - Final result = confirmed post-warmup bytes / post-warmup duration. Never a
+ *    smoothed display value, never a synthetic estimate.
+ *  - Concurrency ramps up during warmup only; adaptive early termination after
+ *    a minimum duration once throughput is stable.
  */
 export async function runUploadTest(options: UploadTestOptions): Promise<SpeedMetrics> {
   const {
     workerUrl,
-    durationMs = 8000,
+    backend: backendOverride,
+    server,
+    maxDurationMs = 8000,
+    minDurationMs = 4000,
     warmupMs = 1500,
     initialStreams = 3,
-    maxStreams = 6,
-    payloadChunkSize = 4 * 1024 * 1024, // 4 MB soft target per request
+    maxStreams = 8,
+    payloadChunkSize = 1 * 1024 * 1024,
+    stabilityThreshold = 0.25,
+    stableDurationMs = 1500,
+    minSampleCount = 12,
     signal,
     onProgress,
   } = options;
 
-  const uploadUrl = `${workerUrl.replace(/\/$/, "")}/upload`;
+  const backend =
+    backendOverride ?? (server ? detectServerBackend(server) : "standard");
+
   const internalController = new AbortController();
 
   const onExternalAbort = () => internalController.abort();
   signal?.addEventListener("abort", onExternalAbort);
 
   const startTime = performance.now();
+  // Confirmed bytes only (server-verified). This is the authoritative total.
   let totalBytesTransferred = 0;
   let currentSmoothedMbps = 0;
   const postWarmupMbpsSamples: number[] = [];
+  const rawSamples: RawMeasurementSample[] = [];
   const loadedLatencySamples: number[] = [];
   let lastProbeTime = 0;
+  let streamFailures = 0;
 
-  // Track warmup transition
   let warmupPassed = false;
   let bytesAtWarmupEnd = 0;
   let warmupEndTime = startTime + warmupMs;
@@ -66,89 +96,82 @@ export async function runUploadTest(options: UploadTestOptions): Promise<SpeedMe
 
   let targetStreams = initialStreams;
 
-  // Dedicated upload stream worker. Each request streams a body whose pull()
-  // hands the transport 128KB at a time, counting `sent` incrementally.
   async function uploadWorker(streamId: number) {
     try {
       while (!internalController.signal.aborted) {
-        const remainingTime = durationMs - (performance.now() - startTime);
+        const remainingTime = maxDurationMs - (performance.now() - startTime);
         if (remainingTime <= 0) break;
 
-        let sent = 0;
-        const body = new ReadableStream<Uint8Array>({
-          pull(controller) {
-            // Stop handing bytes when the test ends or this request hits its target
-            if (internalController.signal.aborted || sent >= payloadChunkSize) {
-              controller.close();
-              return;
-            }
-            if (!sendBuffer) {
-              sendBuffer = new Uint8Array(SEND_CHUNK_SIZE);
-            }
-            controller.enqueue(sendBuffer);
-            sent += SEND_CHUNK_SIZE;
-          },
-        });
+        // Plain Uint8Array body — avoids ReadableStream + duplex:"half"
+        // which triggers ERR_ALPN_NEGOTIATION_FAILED on local HTTP.
+        const payload = new Uint8Array(payloadChunkSize);
 
         try {
-          // The type assertion avoids an excess-property check on `duplex`, which
-          // undici requires for streaming request bodies. Works in browser + Node.
-          const init = {
+          const res = await fetch(buildUploadUrl(workerUrl, backend, streamId), {
             method: "POST",
-            headers: {
-              "Content-Type": "application/octet-stream",
-            },
-            body,
-            duplex: "half",
+            headers: { "Content-Type": "application/octet-stream" },
+            body: payload,
             cache: "no-store",
             signal: internalController.signal,
-          } as RequestInit;
-          const res = await fetch(`${uploadUrl}?s=${streamId}&_t=${Date.now()}`, init);
-          // Credit the bytes actually handed to the transport this request
-          totalBytesTransferred += sent;
+          });
+
           if (!res.ok) {
+            streamFailures++;
             break;
           }
-        } catch (err: unknown) {
-          // AbortError means the test duration elapsed while this request was in
-          // flight — still credit the bytes the transport already consumed.
-          totalBytesTransferred += sent;
-          if ((err as Error)?.name !== "AbortError") {
-            console.warn(`[SpeedTest Engine] Upload stream #${streamId} encountered error:`, err);
+
+          // Authoritative byte count: the server reports exactly what it
+          // received. This corrects any transport-buffer over-credit and
+          // does not count bytes that never arrived.
+          let confirmedBytes = payloadChunkSize;
+          try {
+            const json = (await res.json()) as { bytesReceived?: number };
+            if (typeof json.bytesReceived === "number" && json.bytesReceived >= 0) {
+              confirmedBytes = json.bytesReceived;
+            }
+          } catch {
+            // If the confirmation body is unreadable, fall back to the
+            // known payload size (request fully completed = delivered).
           }
+          totalBytesTransferred += confirmedBytes;
+        } catch (err: unknown) {
+          if ((err as Error)?.name !== "AbortError") {
+            streamFailures++;
+            console.warn(`[SpeedTest Engine] Upload stream #${streamId} error:`, err);
+          }
+          // AbortError = test ended mid-request. The in-flight bytes are NOT
+          // confirmed delivered, so they are not credited.
           break;
         }
       }
     } finally {
-      // no-op; stream scaling tracks targetStreams externally
+      // no-op; scaling tracks targetStreams externally
     }
   }
 
-  // Concurrent loaded latency probe runner
   async function probeLoadedLatency() {
-    const pingUrl = `${workerUrl.replace(/\/$/, "")}/ping?_loaded_up=1&_t=${Date.now()}`;
+    const pingUrl = buildPingUrl(workerUrl, backend, "?_loaded_up=1");
     const t0 = performance.now();
     try {
-      const res = await fetch(pingUrl, {
+      const res = await fetch(`${pingUrl}&_t=${Date.now()}`, {
         cache: "no-store",
         signal: internalController.signal,
       });
       if (res.ok) {
         await res.text();
-        const latency = performance.now() - t0;
-        loadedLatencySamples.push(latency);
+        loadedLatencySamples.push(performance.now() - t0);
       }
     } catch {
-      // Ignore probe aborts
+      // Ignore probe aborts / transient failures.
     }
   }
 
-  // Launch initial parallel streams
   for (let i = 0; i < targetStreams; i++) {
     uploadWorker(i);
   }
 
-  // Measurement and sampling ticker (every 100ms)
+  let stableSince = 0;
+
   await new Promise<void>((resolve, reject) => {
     const interval = setInterval(() => {
       if (internalController.signal.aborted) {
@@ -160,36 +183,54 @@ export async function runUploadTest(options: UploadTestOptions): Promise<SpeedMe
       const now = performance.now();
       const elapsedTotalMs = now - startTime;
 
-      // Feed rolling tracker
       rollingTracker.record(now, totalBytesTransferred);
       const rollingMbps = rollingTracker.getCurrentMbps();
 
-      // Check warmup boundary
       if (!warmupPassed && elapsedTotalMs >= warmupMs) {
         warmupPassed = true;
         bytesAtWarmupEnd = totalBytesTransferred;
         warmupEndTime = now;
       }
 
-      // Smooth the display speed; decay toward 0 during stalls so the gauge
-      // doesn't freeze at a stale high value while the link is idle.
       if (rollingMbps > 0) {
         currentSmoothedMbps = calculateEMA(rollingMbps, currentSmoothedMbps, 0.4);
       } else {
         currentSmoothedMbps = calculateEMA(0, currentSmoothedMbps, 0.2);
       }
 
-      // Collect post-warmup samples
-      if (warmupPassed && rollingMbps > 0) {
+      if (warmupPassed) {
         postWarmupMbpsSamples.push(rollingMbps);
 
-        // Periodically probe loaded latency every 1500ms
+        rawSamples.push({
+          timestampMs: Math.round(now),
+          cumulativeBytes: totalBytesTransferred,
+          throughputMbps: Number(rollingMbps.toFixed(2)),
+          streamCount: targetStreams,
+        });
+
         if (now - lastProbeTime > 1500) {
           lastProbeTime = now;
           probeLoadedLatency();
         }
 
-        // Dynamically scale concurrency if bandwidth justifies it
+        if (
+          elapsedTotalMs >= minDurationMs &&
+          postWarmupMbpsSamples.length >= minSampleCount
+        ) {
+          if (isThroughputStable(postWarmupMbpsSamples, stabilityThreshold)) {
+            if (stableSince === 0) stableSince = now;
+            else if (now - stableSince >= stableDurationMs) {
+              clearInterval(interval);
+              internalController.abort();
+              resolve();
+              return;
+            }
+          } else {
+            stableSince = 0;
+          }
+        }
+      } else {
+        // Warmup ramping only; frozen during measurement.
         if (rollingMbps > 50 && targetStreams < 4) {
           uploadWorker(targetStreams++);
         } else if (rollingMbps > 200 && targetStreams < maxStreams) {
@@ -197,7 +238,7 @@ export async function runUploadTest(options: UploadTestOptions): Promise<SpeedMe
         }
       }
 
-      const progress = Math.min(1, elapsedTotalMs / durationMs);
+      const progress = Math.min(1, elapsedTotalMs / maxDurationMs);
 
       if (onProgress) {
         onProgress({
@@ -208,7 +249,7 @@ export async function runUploadTest(options: UploadTestOptions): Promise<SpeedMe
         });
       }
 
-      if (elapsedTotalMs >= durationMs) {
+      if (elapsedTotalMs >= maxDurationMs) {
         clearInterval(interval);
         internalController.abort();
         resolve();
@@ -222,29 +263,37 @@ export async function runUploadTest(options: UploadTestOptions): Promise<SpeedMe
 
   signal?.removeEventListener("abort", onExternalAbort);
 
-  // Final stable upload speed = exact ground-truth bytes/duration over the
-  // post-warmup window. No trimmed-mean blend: the trimmed mean removes the slow
-  // tail that a sustained average must include, biasing results upward.
+  // Final ground-truth result (confirmed bytes only). No fabrication.
   const finalTime = performance.now();
   const postWarmupBytes = Math.max(0, totalBytesTransferred - bytesAtWarmupEnd);
   const postWarmupDurationSec = Math.max(0.1, (finalTime - warmupEndTime) / 1000);
+  const finalMbps =
+    postWarmupBytes > 0
+      ? Number(calculateSpeedMbps(postWarmupBytes, postWarmupDurationSec).toFixed(1))
+      : 0;
 
-  const finalMbps = calculateSpeedMbps(postWarmupBytes, postWarmupDurationSec);
-  const finalReportedMbps = finalMbps > 0
-    ? Number(finalMbps.toFixed(1))
-    : currentSmoothedMbps;
+  const avgLoadedLatency =
+    loadedLatencySamples.length > 0
+      ? Math.round(loadedLatencySamples.reduce((a, b) => a + b, 0) / loadedLatencySamples.length)
+      : undefined;
 
-  // Compute average loaded latency
-  const avgLoadedLatency = loadedLatencySamples.length > 0
-    ? Math.round(loadedLatencySamples.reduce((a, b) => a + b, 0) / loadedLatencySamples.length)
-    : undefined;
+  const raw: RawTransferMetrics = {
+    samples: rawSamples,
+    totalBytes: totalBytesTransferred,
+    measurementStartMs: Math.round(warmupEndTime),
+    measurementEndMs: Math.round(finalTime),
+    measurementDurationMs: Math.round(finalTime - warmupEndTime),
+    streamCount: targetStreams,
+  };
 
   return {
-    currentMbps: finalReportedMbps,
+    currentMbps: currentSmoothedMbps,
     bytesTransferred: totalBytesTransferred,
     elapsedMs: Math.round(performance.now() - startTime),
-    finalMbps: finalReportedMbps,
+    finalMbps,
     loadedLatencyMs: avgLoadedLatency,
     samples: postWarmupMbpsSamples,
+    streamCount: targetStreams,
+    raw,
   };
 }

@@ -35,16 +35,20 @@ Single entry handling all routes with CORS + security: per-IP sliding-window rat
 
 ## Measurement engine (how a test works)
 
-`SpeedTestController` (`features/speed-test/engine/test-controller.ts`) is a **state machine**: `IDLE → INITIALIZING → PING_TEST → DOWNLOAD_TEST → UPLOAD_TEST → PROCESS_RESULTS → COMPLETED`, plus `ERROR` / `CANCELLED`. A singleton (`speedTestController`) is exported; UI components subscribe via `subscribe(listener)`.
+`SpeedTestController` (`features/speed-test/engine/test-controller.ts`) is a **state machine**: `IDLE → INITIALIZING → (SERVER SELECTION) → PING_TEST → DOWNLOAD_TEST → UPLOAD_TEST → PROCESS_RESULTS → COMPLETED`, plus `ERROR` / `CANCELLED`. A singleton (`speedTestController`) is exported; UI components subscribe via `subscribe(listener)`.
+
+**Server selection (no single hardcoded URL):** the controller resolves the configured server list (`server-registry.ts` — from `NEXT_PUBLIC_SPEEDTEST_SERVERS`, else the legacy `NEXT_PUBLIC_SPEEDTEST_WORKER_URL`, else localhost), probes each candidate by **measured latency** (`server-selection.ts`), and runs the test against the lowest-latency healthy server. On failure it **fails over** to the next ranked server.
 
 Key measurement properties (see `download.ts`, `upload.ts`, `calculations.ts`):
 - **Decimal telecom Mbps** — `1 Mbps = 1,000,000 bits` (`calculateSpeedMbps`), not MiB.
-- **Warm-up window** (default 1500ms) discarded before final throughput is computed — eliminates connection-establishment anomalies.
-- **Rolling 1000ms throughput window** (`RollingThroughputTracker`) for smooth live readout; final speed blends cumulative post-warmup bytes (70%) with a trimmed mean of windowed samples (30%).
-- **Dynamic concurrency** — download scales 2→6 parallel streams when bandwidth justifies it; upload uses 3 parallel streams.
-- **RFC 3550 jitter** (`calculateJitter`) = mean absolute deviation of consecutive latency deltas.
-- **Loaded latency / bufferbloat** — `/ping` probes fired *during* download/upload saturate the link; delta vs. idle produces `A+`…`F` grade (`stability.ts`).
-- **Stability index** (0–100%) from CV of *real* post-warmup throughput samples + jitter/latency ratio → `Excellent/Good/Moderate/Unstable`; omitted entirely when there are too few samples. Download and upload samples are **never mixed** (different magnitudes would distort the CV), and no metrics are fabricated in `results.ts`: the bufferbloat grade is only shown when a real loaded-latency probe was captured.
+- **Raw vs UI data separation** — the engine collects a raw measurement layer (`RawTransferMetrics`: timestamps, cumulative bytes, throughput, stream count). The final result is **always** computed from ground-truth post-warmup bytes / post-warmup duration; the smoothed `currentMbps` driving the gauge is UI-only and **never** used in results.
+- **Warm-up window** (default 1500ms) discarded; concurrency ramps up *during warmup only* and is then frozen so no mid-measurement scaling transient distorts the average.
+- **Adaptive duration** — tests run at least `minDurationMs` (4000ms), end early once throughput is stable for `stableDurationMs` (CV ≤ 0.25), and never exceed `maxDurationMs` (8000ms).
+- **No fabricated results** — if zero bytes transferred post-warmup, the final speed is `0` (never a smoothed fallback).
+- **Server-verified upload** — upload counts only bytes the worker reports it received (`bytesReceived`), correcting client-side over-credit of bytes merely handed to the transport; in-flight requests aborted at test end are not credited.
+- **RFC 3550 jitter** (`calculateJitter`) = mean absolute deviation of consecutive latency deltas. Ping is reported as the **median** of ≥10 probes (robust to a single spike), not the mean.
+- **Loaded latency / bufferbloat** — `/ping` probes fired *during* download/upload saturate the link; delta vs. idle produces `A+`…`F` grade (`stability.ts`). A direction without a real probe is left `undefined`, never replaced with idle latency (which would flatter the grade).
+- **Stability index** (0–100%) from CV of *real* post-warmup throughput samples + jitter/latency ratio → `Excellent/Good/Moderate/Unstable`; omitted entirely when there are too few samples. Download and upload samples are **never mixed** (different magnitudes would distort the CV).
 
 ## Commands
 
@@ -69,11 +73,13 @@ node features/speed-test/engine/__tests__/run-engine-test.mjs          # 14 engi
 node features/speed-test/engine/__tests__/run-advanced-metrics-test.mjs # 12 metric assertions
 node scripts/test-simulation-profiles.mjs       # 13 multi-speed simulation assertions
 node scripts/verify-production-readiness.mjs    # 10 pre-flight checklist items
+node scripts/validate-accuracy.mjs              # 8 accuracy/consistency assertions
 ```
 
 ## Environment
 
-- `NEXT_PUBLIC_SPEEDTEST_WORKER_URL` — points the frontend at the worker. Defaults to `http://127.0.0.1:8787` in code if unset. Templates: `.env.example`, `.env.local.example`, `.env.production.example`.
+- `NEXT_PUBLIC_SPEEDTEST_SERVERS` — JSON array of test servers `[{id,name,region,baseUrl}]`. Enables multi-server discovery; takes precedence over the single-URL var. Templates: `.env.example`, `.env.local.example`, `.env.production.example`.
+- `NEXT_PUBLIC_SPEEDTEST_WORKER_URL` — legacy single-URL config pointing the frontend at one worker. Defaults to `http://127.0.0.1:8787` in code if unset.
 - `ALLOWED_ORIGINS` (worker var) — comma-separated CORS allowlist; `*` in dev.
 - `MAX_BANDWIDTH_BYTES` (worker var, optional) — per-IP 10-min bandwidth budget in bytes (default `5 GB`; `0` disables).
 

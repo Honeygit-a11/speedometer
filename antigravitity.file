@@ -1,0 +1,1112 @@
+# Speedometer Accuracy Fix Plan
+
+## Goal
+
+Fix inconsistent and inaccurate speed-test results in the existing Speedometer repository by improving the measurement infrastructure and replacing or integrating the current custom measurement logic with LibreSpeed-compatible testing infrastructure.
+
+The existing UI and design should remain intact.
+
+---
+
+# Phase 1 — Analyze the Existing Implementation
+
+## Objective
+
+Understand the current measurement flow before changing anything.
+
+### Tasks
+
+1. Review the existing speed-test engine:
+
+   * `features/speed-test/engine/test-controller.ts`
+   * `features/speed-test/engine/download.ts`
+   * `features/speed-test/engine/upload.ts`
+   * `features/speed-test/engine/ping.ts`
+   * `features/speed-test/engine/jitter.ts`
+   * `features/speed-test/engine/calculations.ts`
+   * `features/speed-test/engine/results.ts`
+
+2. Identify all components that depend on the existing engine.
+
+3. Document the current flow:
+
+   `UI → SpeedTestController → Ping → Download → Upload → Results`
+
+4. Identify the current worker/backend implementation and its endpoints:
+
+   * `/health`
+   * `/ping`
+   * `/download`
+   * `/upload`
+
+5. Do not modify the UI during this phase.
+
+### Deliverable
+
+A clear map of:
+
+* frontend components
+* measurement engine
+* worker/backend
+* API endpoints
+* data flow
+
+---
+
+# Phase 2 — Identify Accuracy Problems
+
+## Objective
+
+Find why results are inconsistent between tests.
+
+### Investigate
+
+1. Fixed worker/server selection.
+2. Distance between user and test server.
+3. Worker/server bandwidth limitations.
+4. CDN or edge caching interference.
+5. Download stream concurrency.
+6. Upload stream concurrency.
+7. Dynamic stream scaling behavior.
+8. Warm-up timing.
+9. Browser timing limitations.
+10. Incorrect byte accounting.
+11. Upload bytes counted before server confirmation.
+12. Short measurement duration.
+13. CPU or browser throttling.
+14. Background tab behavior.
+15. Connection reuse and HTTP protocol behavior.
+
+### Required Output
+
+Create a list of issues grouped by:
+
+* Critical accuracy issue
+* Medium accuracy issue
+* Minor issue
+
+Do not implement fixes until the existing architecture is understood.
+
+---
+
+# Phase 3 — Evaluate LibreSpeed Integration
+
+## Objective
+
+Determine the best way to use LibreSpeed without replacing the existing application.
+
+### Requirements
+
+Review LibreSpeed's:
+
+* client-side measurement engine
+* worker implementation
+* backend requirements
+* test endpoints
+* multiple server support
+* ping implementation
+* download implementation
+* upload implementation
+* server selection
+
+### Important Rule
+
+Do not blindly copy LibreSpeed code into the project.
+
+Determine whether the project should:
+
+### Option A — Use LibreSpeed directly
+
+Use LibreSpeed's existing frontend measurement engine.
+
+### Option B — Adapt LibreSpeed measurement logic
+
+Keep the current TypeScript architecture but adapt LibreSpeed's proven measurement methodology.
+
+### Option C — Run LibreSpeed infrastructure separately
+
+Keep:
+
+`Next.js UI → Custom integration layer → LibreSpeed test server`
+
+Choose the option that provides the best compatibility with:
+
+* Next.js 15
+* React 19
+* existing TypeScript code
+* current UI
+* existing result types
+
+### Deliverable
+
+Provide the selected integration architecture and explain why.
+
+---
+
+# Phase 4 — Improve Test Server Architecture
+
+## Objective
+
+Remove the single-server bottleneck.
+
+### Current Problem
+
+The application currently depends on one configured worker URL.
+
+This can produce inconsistent results because:
+
+* users are geographically far from the server
+* routing changes
+* server bandwidth may be limited
+* server load affects measurements
+
+### New Architecture
+
+Implement:
+
+`Client`
+
+↓
+
+`Server Discovery`
+
+↓
+
+`Latency Testing`
+
+↓
+
+`Best Server Selection`
+
+↓
+
+`Speed Test`
+
+### Requirements
+
+Create a server configuration system.
+
+Example concept:
+
+* server ID
+* server name
+* geographic region
+* test URL
+* ping URL
+* download URL
+* upload URL
+
+Do not hardcode one server inside the speed-test engine.
+
+---
+
+# Phase 5 — Automatic Test Server Selection
+
+## Objective
+
+Automatically select the best available test server.
+
+### Process
+
+1. Fetch available test servers.
+2. Perform lightweight latency tests.
+3. Run multiple ping probes.
+4. Calculate average latency.
+5. Remove failed servers.
+6. Select the lowest-latency healthy server.
+
+### Important
+
+Do not select servers based only on geographic location.
+
+Actual latency should determine the selected server.
+
+### Fallback
+
+If the best server fails:
+
+1. Try the next server.
+2. Mark failed server as unavailable.
+3. Continue testing without breaking the UI.
+
+---
+
+# Phase 6 — Replace Download Measurement Logic
+
+## Objective
+
+Improve download accuracy and consistency.
+
+### Requirements
+
+Review the existing custom logic for:
+
+* rolling throughput
+* EMA smoothing
+* warm-up periods
+* dynamic stream scaling
+* fixed chunk sizes
+
+### New Measurement Rules
+
+1. Use proper parallel connections.
+2. Begin with an appropriate number of streams.
+3. Increase streams only when necessary.
+4. Avoid arbitrary thresholds that cause inconsistent results.
+5. Use sufficient test duration.
+6. Ignore connection startup time.
+7. Separate UI display values from final measurement values.
+8. Prevent cached responses.
+9. Ensure the server can continuously provide test data.
+
+### Accuracy Requirement
+
+The final result must be based on:
+
+`Actual transferred bytes / actual measurement duration`
+
+The animated UI value should never affect the final result.
+
+---
+
+# Phase 7 — Fix Upload Measurement
+
+## Objective
+
+Improve upload accuracy.
+
+### Current Risk
+
+Client-side byte counting may count data handed to the browser transport but not necessarily data fully received by the server.
+
+### Requirements
+
+1. Use streaming uploads where supported.
+2. Measure actual upload duration.
+3. Track transferred bytes correctly.
+4. Add server-side verification where possible.
+5. Separate warm-up traffic from measured traffic.
+6. Use multiple concurrent upload streams when required.
+7. Ensure aborted requests do not corrupt final calculations.
+
+### Final Calculation
+
+Use only measured upload data.
+
+Do not calculate the final speed using:
+
+* estimated bytes
+* UI-smoothed values
+* incomplete requests
+* synthetic fallback values unless clearly marked as fallback
+
+---
+
+# Phase 8 — Improve Ping and Jitter
+
+## Objective
+
+Produce stable latency measurements.
+
+### Requirements
+
+1. Run multiple ping probes.
+2. Use cache-busting requests.
+3. Ignore failed probes.
+4. Require a minimum number of successful samples.
+5. Calculate:
+
+   * minimum ping
+   * average ping
+   * median ping
+   * jitter
+
+### Jitter
+
+Use a consistent statistical method and document it.
+
+Do not allow one abnormal latency spike to incorrectly dominate the result.
+
+---
+
+# Phase 9 — Separate Measurement Data from UI Data
+
+## Objective
+
+Prevent UI smoothing from affecting accuracy.
+
+### Create Two Data Layers
+
+## Raw Measurement Data
+
+Contains:
+
+* timestamps
+* bytes transferred
+* latency samples
+* stream information
+* measurement duration
+
+## UI Display Data
+
+Contains:
+
+* smoothed Mbps
+* animated speed
+* progress
+* current phase
+
+### Important Rule
+
+The UI display must never be used to calculate final results.
+
+---
+
+# Phase 10 — Improve Test Duration
+
+## Recommended Approach
+
+Use adaptive testing instead of relying only on fixed durations.
+
+### Example Behavior
+
+1. Start measurement.
+2. Warm up the connection.
+3. Detect when throughput becomes stable.
+4. Continue sampling.
+5. Stop after sufficient stable measurements.
+6. Enforce a maximum test duration.
+
+### Requirements
+
+Implement:
+
+* minimum duration
+* maximum duration
+* stability threshold
+* minimum sample count
+
+This will produce more consistent results across slow and fast connections.
+
+---
+
+# Phase 11 — Add Accuracy Validation
+
+## Objective
+
+Verify that results are consistent.
+
+### Test Against
+
+Compare the application with:
+
+* LibreSpeed
+* Fast.com
+* Ookla Speedtest
+
+### Testing Method
+
+Run multiple tests under the same network conditions.
+
+Record:
+
+* download
+* upload
+* ping
+* jitter
+
+### Compare
+
+Run at least:
+
+* multiple consecutive tests
+* slow network
+* fast network
+* Wi-Fi
+* wired connection if available
+* different browsers
+
+### Measure Consistency
+
+Calculate:
+
+* average result
+* minimum result
+* maximum result
+* variance
+
+Large unexplained differences between consecutive tests should be investigated.
+
+---
+
+# Phase 12 — Keep Existing UI
+
+## Do Not Remove
+
+Keep the existing:
+
+* Next.js application
+* React components
+* speedometer
+* animations
+* GO button
+* progress UI
+* result UI
+* metric cards
+
+### Only Change
+
+Replace the data source behind the UI.
+
+New architecture:
+
+`Existing UI`
+
+↓
+
+`Speed Test State Layer`
+
+↓
+
+`Improved Measurement Engine`
+
+↓
+
+`Server Selection`
+
+↓
+
+`LibreSpeed-Compatible Test Infrastructure`
+
+---
+
+# Phase 13 — Error Handling
+
+Implement clear handling for:
+
+* server unavailable
+* failed ping
+* failed download stream
+* failed upload stream
+* browser incompatibility
+* user cancellation
+* network disconnect
+* timeout
+* server switching
+
+### Important
+
+A partial failure should not immediately destroy the entire test if recovery is possible.
+
+---
+
+# Phase 14 — Production Infrastructure Review
+
+Before deployment, verify:
+
+1. Test server bandwidth is higher than expected user bandwidth.
+2. Server CPU is not the bottleneck.
+3. CDN/proxy does not cache speed-test responses.
+4. Response compression does not distort measurement.
+5. Rate limiting does not interfere with active tests.
+6. Multiple users can test simultaneously.
+7. Server locations are geographically distributed.
+
+---
+
+# Final Target Architecture
+
+```text
+Existing Next.js UI
+        ↓
+Speed Test State Manager
+        ↓
+Server Discovery
+        ↓
+Latency Test
+        ↓
+Best Server Selection
+        ↓
+LibreSpeed / Improved Measurement Engine
+        ↓
+Download Test
+        ↓
+Upload Test
+        ↓
+Ping + Jitter
+        ↓
+Raw Results Processing
+        ↓
+Existing Results UI
+```
+
+---
+
+# Implementation Order
+
+Claude should execute the work in this exact order:
+
+### Step 1
+
+Analyze the current repository completely.
+
+### Step 2
+
+Identify the existing worker/backend and measurement bottlenecks.
+
+### Step 3
+
+Research and evaluate LibreSpeed integration.
+
+### Step 4
+
+Choose the correct integration architecture.
+
+### Step 5
+
+Implement server discovery and selection.
+
+### Step 6
+
+Replace or improve download measurement.
+
+### Step 7
+
+Replace or improve upload measurement.
+
+### Step 8
+
+Improve ping and jitter calculations.
+
+### Step 9
+
+Separate raw measurement data from UI display values.
+
+### Step 10
+
+Add stability and adaptive test duration.
+
+### Step 11
+
+Validate results against established speed-test services.
+
+### Step 12
+
+Run regression tests.
+
+---
+
+# Success Criteria
+
+The implementation is complete only when:
+
+* Results are more consistent across repeated tests.
+* The UI remains unchanged unless necessary.
+* The test server is not the primary bottleneck.
+* Users are automatically connected to the best available test server.
+* Download measurement uses actual transferred bytes.
+* Upload measurement is accurately tracked.
+* UI animation does not affect results.
+* Failed streams do not unnecessarily fail the entire test.
+* Results are validated through repeated testing.
+* The system works in production, not only on localhost.
+
+
+# Additional Phase — UI Redesign and Live Network Speedometer
+
+## Objective
+
+Redesign the speed-test UI so the speedometer visually reacts in real time to the actual network speed being measured.
+
+The meter must not use fake, simulated, or predefined animation values.
+
+---
+
+## Core Requirement
+
+The speedometer needle and displayed speed must be directly driven by the live measurement data.
+
+Data flow:
+
+Existing Speed Test Engine
+↓
+Live Network Mbps Value
+↓
+UI State
+↓
+Speedometer Needle
+↓
+Animated Speed Display
+
+Example:
+
+If measured speed changes:
+
+10 Mbps → 45 Mbps → 120 Mbps → 80 Mbps
+
+The meter must smoothly move according to those actual incoming values.
+
+Do not use random values or decorative fake speed animation.
+
+---
+
+# Phase 15 — Redesign the Main Speedometer
+
+## Design Goal
+
+Create a modern, professional network speed-test meter inspired by real speedometer instruments while keeping the interface clean and easy to understand.
+
+The speedometer should be the main visual focus of the page.
+
+### Required Elements
+
+* Large circular or semi-circular speedometer
+* Animated needle
+* Live Mbps number
+* Download state
+* Upload state
+* Unit display
+* Dynamic scale
+* Smooth real-time movement
+* Responsive design
+
+---
+
+# Speedometer States
+
+## 1. Idle State
+
+Before testing:
+
+* Meter needle rests at zero.
+* Large central GO button is visible.
+* No fake network speed is displayed.
+* Background animation should remain subtle.
+
+Example:
+
+```text
+        SPEED TEST
+
+           GO
+
+        0 Mbps
+```
+
+---
+
+## 2. Initializing State
+
+When connecting:
+
+* Meter remains inactive.
+* Show connection/loading state.
+* Do not animate fake speed.
+
+Display:
+
+`Connecting to best test server`
+
+---
+
+## 3. Ping Test
+
+During latency testing:
+
+* Speed needle remains inactive or subtle.
+* Display current ping measurement.
+* Show ping value updating from real probes.
+
+Example:
+
+`Ping: 24 ms`
+
+---
+
+## 4. Download Test
+
+This is the primary speedometer state.
+
+### Requirements
+
+* Meter receives `currentMbps` directly from the measurement engine.
+* Needle position updates continuously.
+* Large central value updates continuously.
+* Label displays `DOWNLOAD`.
+* Download indicator is active.
+
+Example:
+
+```text
+              200
+        150           250
+
+             NEEDLE
+
+               87.4
+               Mbps
+
+            DOWNLOAD
+```
+
+The needle must follow the actual incoming network measurement.
+
+---
+
+## 5. Upload Test
+
+Use the same meter.
+
+Change:
+
+* Label to `UPLOAD`
+* Upload indicator becomes active
+* Meter receives actual upload Mbps
+
+Example:
+
+```text
+               42.8
+               Mbps
+
+              UPLOAD
+```
+
+---
+
+## 6. Completed State
+
+After testing:
+
+Display final results:
+
+* Download speed
+* Upload speed
+* Ping
+* Jitter
+
+The speedometer can animate smoothly to the final result before transitioning to the results screen.
+
+---
+
+# Dynamic Meter Scaling
+
+Do not permanently use one fixed scale.
+
+The meter must support different network speeds.
+
+Examples:
+
+### Slow Connection
+
+Scale:
+
+`0 → 10 → 25 → 50 Mbps`
+
+### Medium Connection
+
+Scale:
+
+`0 → 50 → 100 → 250 Mbps`
+
+### Fast Connection
+
+Scale:
+
+`0 → 250 → 500 → 1000 Mbps`
+
+### Very Fast Connection
+
+Scale:
+
+`0 → 500 → 1000 → 2000+ Mbps`
+
+---
+
+## Scaling Logic
+
+The speedometer maximum should be determined intelligently.
+
+The meter should not constantly rescale during every small speed change.
+
+Recommended behavior:
+
+1. Start with a reasonable initial scale.
+2. If actual speed approaches the maximum range:
+
+   * expand the meter range.
+3. Animate scale transitions smoothly.
+4. Keep the scale stable during normal fluctuations.
+
+Example:
+
+Current meter maximum:
+
+`100 Mbps`
+
+Actual measured speed:
+
+`140 Mbps`
+
+Then transition to:
+
+`250 Mbps`
+
+If speed reaches:
+
+`300 Mbps`
+
+Then transition to:
+
+`500 Mbps`
+
+The needle should never appear permanently stuck at the maximum because the scale is too low.
+
+---
+
+# Needle Movement
+
+## Important Requirements
+
+The needle should:
+
+* Follow real measurement data.
+* Move smoothly.
+* React quickly to network changes.
+* Not lag excessively.
+* Not jump abruptly between values.
+
+Use interpolation only for visual smoothing.
+
+### Important Rule
+
+Visual smoothing must not modify the actual measurement value.
+
+Example:
+
+Actual measurement:
+
+`92.47 Mbps`
+
+Displayed measurement may animate smoothly toward:
+
+`92.47 Mbps`
+
+But the speed-test result calculation must remain independent of UI animation.
+
+---
+
+# Real-Time Data Integration
+
+The existing measurement engine already exposes live progress values.
+
+Use:
+
+* `state.download.currentMbps`
+* `state.upload.currentMbps`
+
+as the primary real-time input to the speedometer.
+
+The UI should not generate its own speed values.
+
+Data flow:
+
+```text
+Network Transfer
+      ↓
+Measurement Engine
+      ↓
+currentMbps
+      ↓
+Speed Test State
+      ↓
+React Component
+      ↓
+Speedometer Animation
+```
+
+---
+
+# Separate Download and Upload Visual Modes
+
+## Download Mode
+
+Visual state:
+
+* Download label
+* Download icon
+* Download-specific visual indicator
+
+Live value:
+
+`download.currentMbps`
+
+## Upload Mode
+
+Visual state:
+
+* Upload label
+* Upload icon
+* Upload-specific visual indicator
+
+Live value:
+
+`upload.currentMbps`
+
+---
+
+# Frequency / Network Speed Display
+
+The main meter should display the actual measured network speed prominently.
+
+Format:
+
+`125.6`
+
+`Mbps`
+
+Do not refer to this as Wi-Fi frequency unless the application is specifically measuring Wi-Fi radio frequency.
+
+The meter is measuring:
+
+**Network throughput / internet speed in Mbps**
+
+Not:
+
+* 2.4 GHz
+* 5 GHz
+* Wi-Fi channel frequency
+
+---
+
+# Additional Live Information
+
+Below or around the speedometer, display secondary real-time information:
+
+During Download:
+
+* Current Mbps
+* Data transferred
+* Test progress
+
+During Upload:
+
+* Current Mbps
+* Data transferred
+* Test progress
+
+Example:
+
+```text
+DOWNLOAD
+
+87.4 Mbps
+
+Transferred: 124 MB
+Progress: 63%
+```
+
+Keep these secondary values visually smaller than the main speedometer.
+
+---
+
+# Visual Redesign Requirements
+
+The new design should prioritize:
+
+1. Speedometer
+2. Current Mbps
+3. Current test phase
+4. Final results
+
+Avoid making the interface feel like a technical dashboard.
+
+The experience should be:
+
+* Minimal
+* Modern
+* Fast
+* Premium
+* Focused on the speed measurement
+
+---
+
+# Responsive Requirements
+
+The meter must work on:
+
+* Desktop
+* Tablet
+* Mobile
+
+Requirements:
+
+* Meter scales proportionally.
+* Needle remains accurate.
+* Text remains readable.
+* No overflow.
+* No layout shift during speed changes.
+
+---
+
+# Performance Requirements
+
+The speedometer animation must:
+
+* Avoid unnecessary React re-renders.
+* Use efficient animation techniques.
+* Handle updates approximately every 100ms or faster.
+* Remain smooth during active network testing.
+
+Do not allow UI rendering to affect network measurement accuracy.
+
+---
+
+# Final UI Data Architecture
+
+```text
+LibreSpeed / Measurement Engine
+              ↓
+      Raw Network Metrics
+              ↓
+       Speed Test Controller
+              ↓
+         React State
+              ↓
+     Current Download Mbps
+              ↓
+      Speedometer Component
+              ↓
+       Needle Position
+              +
+       Live Number Display
+```
+
+For upload:
+
+```text
+Current Upload Mbps
+        ↓
+Speedometer Component
+        ↓
+Needle Position
+        +
+Live Upload Display
+```
+
+---
+
+# Acceptance Criteria
+
+The UI redesign is complete only when:
+
+* The speedometer uses actual live network data.
+* No fake/random speed animation exists.
+* The needle responds to real Mbps changes.
+* Download and upload use separate live measurements.
+* Meter scale supports slow and very fast connections.
+* Dynamic scaling works correctly.
+* Visual smoothing does not affect measurements.
+* UI performance does not reduce test accuracy.
+* The design works on desktop and mobile.
+* Final results match the actual measured test results.

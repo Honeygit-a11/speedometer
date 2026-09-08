@@ -13,14 +13,23 @@ export interface AggregateInput {
  * including advanced network metrics (Loaded Latency, Bufferbloat Grade, Stability).
  */
 export function aggregateResults(input: AggregateInput): TestResults {
-  const idleMs = input.ping.avgPing > 0 ? input.ping.avgPing : input.ping.currentPing;
+  // Robust central latency: median resists a single anomalous spike. Fall back
+  // to avg/current only when the median is unavailable.
+  const idleMs =
+    input.ping.medianPing > 0
+      ? input.ping.medianPing
+      : input.ping.avgPing > 0
+      ? input.ping.avgPing
+      : input.ping.currentPing;
 
-  // Loaded latency is only reported from real concurrent probes; never fabricated.
+  // Loaded latency is only reported from real concurrent probes; never
+  // fabricated. A missing direction stays undefined (no idle-latency stand-in,
+  // which would flatter the bufferbloat grade).
   const downloadLoadedMs = input.download.loadedLatencyMs;
   const uploadLoadedMs = input.upload.loadedLatencyMs;
   const hasLoadedLatencyProbe = downloadLoadedMs !== undefined || uploadLoadedMs !== undefined;
   const loadedLatency = hasLoadedLatencyProbe
-    ? calculateBufferbloatGrade(idleMs, downloadLoadedMs ?? idleMs, uploadLoadedMs ?? idleMs)
+    ? calculateBufferbloatGrade(idleMs, downloadLoadedMs, uploadLoadedMs)
     : undefined;
 
   // Stability is scored from REAL post-warmup throughput samples within a single

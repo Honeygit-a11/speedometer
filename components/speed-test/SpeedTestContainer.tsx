@@ -12,6 +12,7 @@ import { Results } from "./Results";
 import { ArrowDown, ArrowUp, Activity, Play, AlertCircle, RotateCcw, XCircle, Server, Loader2 } from "lucide-react";
 import { formatLatency, formatSpeed } from "@/lib/utils";
 import { Aurora } from "@/components/ui";
+import { isLoopbackUrl } from "@/features/speed-test/engine/server-endpoints";
 
 const phaseVariants = {
   initial: { opacity: 0, scale: 0.95, y: 10 },
@@ -29,21 +30,22 @@ export const SpeedTestContainer: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  const workerUrl = process.env.NEXT_PUBLIC_SPEEDTEST_WORKER_URL || "http://127.0.0.1:8787";
-
   const handleStartTest = useCallback(async () => {
     try {
+      // Server selection happens inside the controller (registry → latency probe
+      // → best server, with failover). No hardcoded single URL here.
       await speedTestController.start({
-        workerUrl,
-        pingProbes: 6,
-        downloadDurationMs: 8000,
-        uploadDurationMs: 8000,
+        pingProbes: 10,
+        downloadMaxDurationMs: 8000,
+        downloadMinDurationMs: 4000,
+        uploadMaxDurationMs: 8000,
+        uploadMinDurationMs: 4000,
         warmupMs: 1500,
       });
     } catch (err) {
       console.error("[SpeedTest UI] Test failed or was cancelled:", err);
     }
-  }, [workerUrl]);
+  }, []);
 
   const handleCancelTest = useCallback(() => {
     speedTestController.cancel();
@@ -83,6 +85,8 @@ export const SpeedTestContainer: React.FC = () => {
       : state.phase === "COMPLETED"
       ? "rgba(16, 185, 129, 0.15)"
       : "rgba(6, 182, 212, 0.1)";
+
+  const isLocalServer = state.server ? isLoopbackUrl(state.server.baseUrl) : false;
 
   return (
     <div className="w-full max-w-4xl mx-auto flex flex-col items-center space-y-8">
@@ -157,8 +161,12 @@ export const SpeedTestContainer: React.FC = () => {
                 <Loader2 className="w-8 h-8 text-cyan-400 animate-spin" />
               </div>
               <div className="text-center space-y-1">
-                <h3 className="text-lg font-bold text-white">Connecting to Edge Infrastructure</h3>
-                <p className="text-xs text-slate-400">Preparing low-latency test streams...</p>
+                <h3 className="text-lg font-bold text-white">Connecting to best test server</h3>
+                <p className="text-xs text-slate-400">
+                  {state.server
+                    ? `${state.server.name} · ${state.server.region} · ${state.server.latencyMs}ms`
+                    : "Probing available edge nodes by latency..."}
+                </p>
               </div>
             </motion.div>
           )}
@@ -327,6 +335,26 @@ export const SpeedTestContainer: React.FC = () => {
           </button>
         )}
       </div>
+
+      {/* Selected Test Server Indicator */}
+      {state.server && (
+        <div className="flex flex-col items-center gap-2">
+          <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
+            <Server className="w-3 h-3" />
+            <span>
+              Testing against <span className="text-slate-300 font-semibold">{state.server.name}</span>
+              {" · "}
+              {state.server.latencyMs}ms
+            </span>
+          </div>
+          {isLocalServer && (
+            <p className="text-[11px] text-amber-400/90 text-center max-w-md leading-relaxed">
+              Local server detected — results reflect loopback throughput on your machine, not your ISP
+              internet speed. Deploy a remote Cloudflare Worker for accurate measurements.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Real-Time Metrics Grid (Always visible for at-a-glance telemetry) */}
       <motion.div

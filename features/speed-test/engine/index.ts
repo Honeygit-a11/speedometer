@@ -6,3 +6,5 @@ export * from "./upload";
 export * from "./results";
 export * from "./compatibility";
 export * from "./test-controller";
+export * from "./server-registry";
+export * from "./server-selection";

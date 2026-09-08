@@ -209,19 +209,23 @@ export const Results: React.FC<ResultsProps> = ({ results, onRestart }) => {
                       <div className="p-2 rounded-lg bg-slate-900/60 border border-slate-800/80">
                         <span className="text-[10px] text-slate-500 font-medium block">Download</span>
                         <span className="text-sm font-bold text-cyan-400">
-                          {loadedLatency.downloadLoadedMs} ms
+                          {loadedLatency.downloadLoadedMs ?? "n/a"} ms
                         </span>
                         <span className="text-[9px] text-slate-500 block">
-                          +{loadedLatency.downloadDeltaMs}ms
+                          {loadedLatency.downloadLoadedMs !== undefined
+                            ? `+${loadedLatency.downloadDeltaMs}ms`
+                            : "— not measured —"}
                         </span>
                       </div>
                       <div className="p-2 rounded-lg bg-slate-900/60 border border-slate-800/80">
                         <span className="text-[10px] text-slate-500 font-medium block">Upload</span>
                         <span className="text-sm font-bold text-purple-400">
-                          {loadedLatency.uploadLoadedMs} ms
+                          {loadedLatency.uploadLoadedMs ?? "n/a"} ms
                         </span>
                         <span className="text-[9px] text-slate-500 block">
-                          +{loadedLatency.uploadDeltaMs}ms
+                          {loadedLatency.uploadLoadedMs !== undefined
+                            ? `+${loadedLatency.uploadDeltaMs}ms`
+                            : "— not measured —"}
                         </span>
                       </div>
                     </div>

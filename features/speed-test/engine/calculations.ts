@@ -53,6 +53,58 @@ export function calculateTrimmedMean(samples: number[], trimPercent = 0.15): num
 }
 
 /**
+ * Calculates the median of a sample set (robust central tendency, tolerant of
+ * a single outlier spike — used for ping reporting).
+ */
+export function calculateMedian(samples: number[]): number {
+  if (samples.length === 0) return 0;
+  const sorted = [...samples].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return Number(((sorted[mid - 1] + sorted[mid]) / 2).toFixed(2));
+  }
+  return Number(sorted[mid].toFixed(2));
+}
+
+/**
+ * Population standard deviation.
+ */
+export function calculateStdDev(samples: number[]): number {
+  if (samples.length === 0) return 0;
+  const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
+  const variance =
+    samples.reduce((acc, v) => acc + (v - mean) * (v - mean), 0) / samples.length;
+  return Math.sqrt(variance);
+}
+
+/**
+ * Coefficient of variation (stdDev / mean) — a dimensionless, scale-invariant
+ * measure of stability. 0 = perfectly stable.
+ */
+export function calculateCoefficientOfVariation(samples: number[]): number {
+  if (samples.length === 0) return 0;
+  const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
+  if (mean === 0) return 0;
+  return calculateStdDev(samples) / mean;
+}
+
+/**
+ * Whether a throughput sample set has been stable long enough to end the test
+ * early (adaptive duration). Uses the coefficient of variation over the most
+ * recent `windowSize` samples.
+ */
+export function isThroughputStable(
+  samples: number[],
+  threshold: number,
+  windowSize = 8
+): boolean {
+  if (samples.length < windowSize) return false;
+  const recent = samples.slice(-windowSize);
+  const cv = calculateCoefficientOfVariation(recent);
+  return cv <= threshold;
+}
+
+/**
  * Calculates the Nth percentile of a sample set (e.g. 90th percentile).
  */
 export function calculatePercentile(samples: number[], percentile = 0.9): number {

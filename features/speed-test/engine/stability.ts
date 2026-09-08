@@ -2,15 +2,28 @@ import { LoadedLatency, NetworkStability } from "@/types";
 
 /**
  * Grades bufferbloat based on latency inflation during active network saturation.
+ *
+ * A direction is only evaluated if a REAL loaded-latency probe was captured for
+ * it — a missing direction (e.g. the upload probe never returned) is never
+ * substituted with idle latency, which would flatter the grade. The grade uses
+ * the worst real delta of the directions measured.
  */
 export function calculateBufferbloatGrade(
   idleMs: number,
-  downloadLoadedMs: number,
-  uploadLoadedMs: number
+  downloadLoadedMs: number | undefined,
+  uploadLoadedMs: number | undefined
 ): LoadedLatency {
-  const downloadDelta = Math.max(0, Number((downloadLoadedMs - idleMs).toFixed(1)));
-  const uploadDelta = Math.max(0, Number((uploadLoadedMs - idleMs).toFixed(1)));
-  const maxDelta = Math.max(downloadDelta, uploadDelta);
+  const computeDelta = (loaded: number | undefined): number =>
+    loaded === undefined ? 0 : Math.max(0, Number((loaded - idleMs).toFixed(1)));
+
+  const downloadDelta = computeDelta(downloadLoadedMs);
+  const uploadDelta = computeDelta(uploadLoadedMs);
+
+  // Only grade from directions that actually produced a probe.
+  const measuredDeltas: number[] = [];
+  if (downloadLoadedMs !== undefined) measuredDeltas.push(downloadDelta);
+  if (uploadLoadedMs !== undefined) measuredDeltas.push(uploadDelta);
+  const maxDelta = measuredDeltas.length > 0 ? Math.max(...measuredDeltas) : 0;
 
   let grade: "A+" | "A" | "B" | "C" | "D" | "F";
   if (maxDelta <= 5) {
@@ -27,10 +40,12 @@ export function calculateBufferbloatGrade(
     grade = "F";
   }
 
+  const field = (v: number | undefined) => (v === undefined ? undefined : Number(v.toFixed(1)));
+
   return {
     idleMs: Number(idleMs.toFixed(1)),
-    downloadLoadedMs: Number(downloadLoadedMs.toFixed(1)),
-    uploadLoadedMs: Number(uploadLoadedMs.toFixed(1)),
+    downloadLoadedMs: field(downloadLoadedMs),
+    uploadLoadedMs: field(uploadLoadedMs),
     downloadDeltaMs: downloadDelta,
     uploadDeltaMs: uploadDelta,
     bufferbloatGrade: grade,

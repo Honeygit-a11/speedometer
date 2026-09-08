@@ -1,33 +1,55 @@
-import { SpeedTestState, TestPhase, TestResults } from "@/types";
+import { SpeedTestState, TestPhase, TestResults, SelectedServerInfo } from "@/types";
 import { runPingTest } from "./ping";
 import { runDownloadTest } from "./download";
 import { runUploadTest } from "./upload";
 import { aggregateResults } from "./results";
 import { checkBrowserCompatibility } from "./compatibility";
+import { getServerList, SpeedTestServer } from "./server-registry";
+import { selectBestServer, ServerSelectionResult } from "./server-selection";
+import { libreSpeedClient } from "../integration/librespeed-client";
+import { detectServerBackend } from "./server-endpoints";
 
 export interface SpeedTestConfig {
-  workerUrl: string;
+  /** Explicit server list override. Defaults to the configured registry. */
+  servers?: SpeedTestServer[];
+  /** Latency probes per candidate server during selection (default 4). */
+  serverProbeCount?: number;
   pingProbes?: number;
-  downloadDurationMs?: number;
-  uploadDurationMs?: number;
+  /** Hard caps on measurement phases (default 8000ms each). */
+  downloadMaxDurationMs?: number;
+  uploadMaxDurationMs?: number;
+  /** Minimum duration before early termination (default 4000ms each). */
+  downloadMinDurationMs?: number;
+  uploadMinDurationMs?: number;
   warmupMs?: number;
 }
 
 export type StateChangeListener = (state: SpeedTestState) => void;
 
+const EMPTY_PING = { currentPing: 0, minPing: 0, avgPing: 0, medianPing: 0, samples: [] };
+const EMPTY_SPEED = { currentMbps: 0, bytesTransferred: 0, elapsedMs: 0, finalMbps: 0 };
+
 const INITIAL_STATE: SpeedTestState = {
   phase: "IDLE",
-  ping: { currentPing: 0, minPing: 0, avgPing: 0, samples: [] },
+  ping: EMPTY_PING,
   jitter: { jitter: 0 },
-  download: { currentMbps: 0, bytesTransferred: 0, elapsedMs: 0, finalMbps: 0 },
-  upload: { currentMbps: 0, bytesTransferred: 0, elapsedMs: 0, finalMbps: 0 },
+  download: EMPTY_SPEED,
+  upload: EMPTY_SPEED,
   results: null,
   error: null,
+  server: null,
 };
 
 /**
  * Headless Speed Test Controller
  * Coordinates the full measurement lifecycle through an event-driven state machine.
+ *
+ * Flow: IDLE → INITIALIZING → (SERVER SELECTION) → PING_TEST → DOWNLOAD_TEST →
+ * UPLOAD_TEST → PROCESS_RESULTS → COMPLETED, plus ERROR / CANCELLED.
+ *
+ * Failover: the best server is chosen by measured latency; if the whole test
+ * fails against it (network-level error), it retries against the next ranked
+ * server before giving up.
  */
 export class SpeedTestController {
   private state: SpeedTestState = { ...INITIAL_STATE };
@@ -76,17 +98,19 @@ export class SpeedTestController {
     }
     this.state = {
       phase: "IDLE",
-      ping: { currentPing: 0, minPing: 0, avgPing: 0, samples: [] },
+      ping: { ...EMPTY_PING },
       jitter: { jitter: 0 },
-      download: { currentMbps: 0, bytesTransferred: 0, elapsedMs: 0, finalMbps: 0 },
-      upload: { currentMbps: 0, bytesTransferred: 0, elapsedMs: 0, finalMbps: 0 },
+      download: { ...EMPTY_SPEED },
+      upload: { ...EMPTY_SPEED },
       results: null,
       error: null,
+      server: null,
     };
     this.notify();
   }
 
   public cancel() {
+    libreSpeedClient.cancel();
     if (this.abortController) {
       this.abortController.abort();
       this.abortController = null;
@@ -96,8 +120,223 @@ export class SpeedTestController {
   }
 
   /**
-   * Executes the full speed test sequence:
-   * INITIALIZING -> PING_TEST -> DOWNLOAD_TEST -> UPLOAD_TEST -> PROCESS_RESULTS -> COMPLETED
+   * Ground-truth measurement pipeline: post-warmup bytes / duration, server-
+   * verified upload counts, and median ping. This is the primary path because
+   * it derives results from actual transferred data rather than worker estimates.
+   */
+  private async runCustomEngine(
+    config: SpeedTestConfig,
+    server: SpeedTestServer,
+    signal: AbortSignal
+  ): Promise<TestResults> {
+    const url = server.baseUrl;
+    const warmupMs = config.warmupMs ?? 1500;
+
+    this.updateState({ phase: "PING_TEST" });
+    const pingResult = await runPingTest({
+      workerUrl: url,
+      server,
+      sampleCount: config.pingProbes ?? 10,
+      signal,
+      onProbe: (currentPing, stats) => {
+        this.updateState({
+          ping: {
+            ...this.state.ping,
+            currentPing,
+            minPing: stats.min,
+            avgPing: stats.avg,
+            medianPing: stats.median,
+          },
+          jitter: { jitter: stats.jitter },
+        });
+      },
+    });
+
+    this.updateState({ ping: pingResult.ping, jitter: pingResult.jitter });
+
+    this.updateState({ phase: "DOWNLOAD_TEST" });
+    const downloadResult = await runDownloadTest({
+      workerUrl: url,
+      server,
+      maxDurationMs: config.downloadMaxDurationMs ?? 8000,
+      minDurationMs: config.downloadMinDurationMs ?? 4000,
+      warmupMs,
+      signal,
+      onProgress: (metrics) => {
+        this.updateState({
+          download: {
+            ...this.state.download,
+            currentMbps: metrics.currentMbps,
+            bytesTransferred: metrics.bytesTransferred,
+            elapsedMs: metrics.elapsedMs,
+            finalMbps: 0,
+          },
+        });
+      },
+    });
+    this.updateState({ download: downloadResult });
+
+    this.updateState({ phase: "UPLOAD_TEST" });
+    const uploadResult = await runUploadTest({
+      workerUrl: url,
+      server,
+      maxDurationMs: config.uploadMaxDurationMs ?? 8000,
+      minDurationMs: config.uploadMinDurationMs ?? 4000,
+      warmupMs,
+      signal,
+      onProgress: (metrics) => {
+        this.updateState({
+          upload: {
+            ...this.state.upload,
+            currentMbps: metrics.currentMbps,
+            bytesTransferred: metrics.bytesTransferred,
+            elapsedMs: metrics.elapsedMs,
+            finalMbps: 0,
+          },
+        });
+      },
+    });
+    this.updateState({ upload: uploadResult });
+
+    this.updateState({ phase: "PROCESS_RESULTS" });
+    return aggregateResults({
+      ping: this.state.ping,
+      jitter: this.state.jitter,
+      download: this.state.download,
+      upload: this.state.upload,
+    });
+  }
+
+  /**
+   * LibreSpeed web-worker fallback for LibreSpeed-compatible backends only.
+   */
+  private async runLibreSpeedEngine(
+    config: SpeedTestConfig,
+    server: SpeedTestServer,
+    signal: AbortSignal
+  ): Promise<TestResults> {
+    const url = server.baseUrl;
+    const warmupMs = config.warmupMs ?? 1500;
+
+    const libreResult = await libreSpeedClient.runTest(
+      {
+        serverUrl: url,
+        pingProbes: config.pingProbes ?? 10,
+        downloadDurationMs: config.downloadMaxDurationMs ?? 8000,
+        downloadMinDurationMs: config.downloadMinDurationMs ?? 4000,
+        uploadDurationMs: config.uploadMaxDurationMs ?? 8000,
+        uploadMinDurationMs: config.uploadMinDurationMs ?? 4000,
+        warmupMs,
+        downloadChunkSizeMb: 4,
+        concurrency: 4,
+      },
+      (telemetry) => {
+        if (signal.aborted) return;
+
+        if (telemetry.phase === "PING") {
+          this.updateState({
+            phase: "PING_TEST",
+            ping: {
+              ...this.state.ping,
+              currentPing: telemetry.currentPing ?? this.state.ping.currentPing,
+              minPing: telemetry.currentPing
+                ? Math.min(this.state.ping.minPing || Infinity, telemetry.currentPing)
+                : this.state.ping.minPing,
+              avgPing: telemetry.avgPing ?? this.state.ping.avgPing,
+              medianPing: telemetry.avgPing ?? this.state.ping.medianPing,
+            },
+            jitter: { jitter: telemetry.jitter ?? this.state.jitter.jitter },
+          });
+        } else if (telemetry.phase === "DOWNLOAD") {
+          this.updateState({
+            phase: "DOWNLOAD_TEST",
+            download: {
+              ...this.state.download,
+              currentMbps: telemetry.currentMbps,
+              bytesTransferred: telemetry.bytesTransferred,
+              elapsedMs: 0,
+              finalMbps: 0,
+            },
+          });
+        } else if (telemetry.phase === "UPLOAD") {
+          this.updateState({
+            phase: "UPLOAD_TEST",
+            upload: {
+              ...this.state.upload,
+              currentMbps: telemetry.currentMbps,
+              bytesTransferred: telemetry.bytesTransferred,
+              elapsedMs: 0,
+              finalMbps: 0,
+            },
+          });
+        }
+      }
+    );
+
+    this.updateState({
+      phase: "PROCESS_RESULTS",
+      download: {
+        currentMbps: libreResult.downloadSpeed,
+        finalMbps: libreResult.downloadSpeed,
+        bytesTransferred: libreResult.downloadBytes,
+        elapsedMs: libreResult.downloadDurationMs,
+      },
+      upload: {
+        currentMbps: libreResult.uploadSpeed,
+        finalMbps: libreResult.uploadSpeed,
+        bytesTransferred: libreResult.uploadBytes,
+        elapsedMs: libreResult.uploadDurationMs,
+      },
+      ping: {
+        currentPing: libreResult.ping,
+        minPing: libreResult.minPing,
+        avgPing: libreResult.ping,
+        medianPing: libreResult.ping,
+        samples: [libreResult.ping],
+      },
+      jitter: { jitter: libreResult.jitter },
+    });
+
+    return aggregateResults({
+      ping: this.state.ping,
+      jitter: this.state.jitter,
+      download: this.state.download,
+      upload: this.state.upload,
+    });
+  }
+
+  /**
+   * Runs the full measured lifecycle once against a single server.
+   * Primary: custom engine (bytes/duration ground truth).
+   * Fallback: LibreSpeed worker for LibreSpeed backends only.
+   */
+  private async runAgainstServer(
+    config: SpeedTestConfig,
+    server: SpeedTestServer,
+    signal: AbortSignal
+  ): Promise<TestResults> {
+    try {
+      return await this.runCustomEngine(config, server, signal);
+    } catch (primaryErr: unknown) {
+      if (signal.aborted || (primaryErr as Error)?.name === "AbortError") {
+        throw primaryErr;
+      }
+
+      if (detectServerBackend(server) !== "librespeed") {
+        throw primaryErr;
+      }
+
+      console.warn(
+        `[SpeedTest] Custom engine failed against ${server.baseUrl}, trying LibreSpeed worker:`,
+        (primaryErr as Error)?.message
+      );
+      return await this.runLibreSpeedEngine(config, server, signal);
+    }
+  }
+
+  /**
+   * Executes the full speed test with automatic best-server selection and
+   * failover to the next ranked server on failure.
    */
   public async start(config: SpeedTestConfig): Promise<TestResults> {
     if (this.isRunning) {
@@ -122,110 +361,81 @@ export class SpeedTestController {
         phase: "INITIALIZING",
         error: null,
         results: null,
+        server: null,
       });
 
-      // Quick reachability verification
-      const reachability = await fetch(`${config.workerUrl.replace(/\/$/, "")}/health`, {
-        cache: "no-store",
-        signal,
-      }).catch((err) => {
-        throw new Error(`Testing endpoint unreachable: ${err.message}`);
-      });
+      // 2. SERVER DISCOVERY + BEST-SERVER SELECTION (latency-based, not geolocated)
+      const candidates = config.servers && config.servers.length > 0
+        ? config.servers
+        : getServerList();
 
-      if (!reachability.ok) {
-        throw new Error(`Testing endpoint returned status ${reachability.status}`);
+      if (candidates.length === 0) {
+        throw new Error(
+          "No remote test servers configured. Set NEXT_PUBLIC_SPEEDTEST_WORKER_URL to your deployed Cloudflare Worker URL, or set NEXT_PUBLIC_ALLOW_LOCAL_SERVERS=true for local development only."
+        );
       }
 
-      // 2. PING TEST
-      this.updateState({ phase: "PING_TEST" });
-      const pingResult = await runPingTest({
-        workerUrl: config.workerUrl,
-        sampleCount: config.pingProbes ?? 6,
+      const selection = await selectBestServer({
+        servers: candidates,
+        probeCount: config.serverProbeCount ?? 4,
         signal,
-        onProbe: (currentPing, stats) => {
-          this.updateState({
-            ping: {
-              ...this.state.ping,
-              currentPing,
-              minPing: stats.min,
-              avgPing: stats.avg,
-            },
-            jitter: {
-              jitter: stats.jitter,
-            },
-          });
+        onStatus: (status) => {
+          console.info("[SpeedTest Engine]", status);
         },
       });
 
-      this.updateState({
-        ping: pingResult.ping,
-        jitter: pingResult.jitter,
-      });
+      const ranks: ServerSelectionResult[] = selection.ranked;
+      let lastFailure: Error | null = null;
 
-      // 3. DOWNLOAD TEST
-      this.updateState({ phase: "DOWNLOAD_TEST" });
-      const downloadResult = await runDownloadTest({
-        workerUrl: config.workerUrl,
-        durationMs: config.downloadDurationMs ?? 8000,
-        warmupMs: config.warmupMs ?? 1500,
-        signal,
-        onProgress: (metrics) => {
+      // 3. RUN THE TEST AGAINST THE BEST SERVER, FAILOVER DOWN THE RANKED LIST
+      for (const rank of ranks) {
+        if (signal.aborted) break;
+
+        const serverInfo: SelectedServerInfo = {
+          id: rank.server.id,
+          name: rank.server.name,
+          region: rank.server.region,
+          baseUrl: rank.server.baseUrl,
+          latencyMs: rank.latencyMs,
+        };
+        this.updateState({ server: serverInfo });
+
+        try {
+          const finalResults = await this.runAgainstServer(config, rank.server, signal);
+
+          // 4. COMPLETED
           this.updateState({
-            download: {
-              currentMbps: metrics.currentMbps,
-              bytesTransferred: metrics.bytesTransferred,
-              elapsedMs: metrics.elapsedMs,
-              finalMbps: 0, // populated with the true result once the phase completes
-            },
+            phase: "COMPLETED",
+            results: finalResults,
           });
-        },
-      });
 
-      this.updateState({
-        download: downloadResult,
-      });
+          this.isRunning = false;
+          this.abortController = null;
+          return finalResults;
+        } catch (err: unknown) {
+          if ((err as Error)?.name === "AbortError") {
+            throw err; // user cancellation — no failover
+          }
+          lastFailure = err instanceof Error ? err : new Error(String(err));
 
-      // 4. UPLOAD TEST
-      this.updateState({ phase: "UPLOAD_TEST" });
-      const uploadResult = await runUploadTest({
-        workerUrl: config.workerUrl,
-        durationMs: config.uploadDurationMs ?? 8000,
-        warmupMs: config.warmupMs ?? 1500,
-        signal,
-        onProgress: (metrics) => {
-          this.updateState({
-            upload: {
-              currentMbps: metrics.currentMbps,
-              bytesTransferred: metrics.bytesTransferred,
-              elapsedMs: metrics.elapsedMs,
-              finalMbps: 0, // populated with the true result once the phase completes
-            },
-          });
-        },
-      });
+          if (ranks.length > 1) {
+            console.warn(
+              `[SpeedTest Engine] Test failed against ${rank.server.name}, failing over to next server:`,
+              lastFailure.message
+            );
+          }
+        }
+      }
 
-      this.updateState({
-        upload: uploadResult,
-      });
+      // All servers exhausted.
+      if (signal.aborted) {
+        this.updateState({ phase: "CANCELLED" });
+        throw new DOMException("Speed test aborted by user", "AbortError");
+      }
 
-      // 5. PROCESS RESULTS
-      this.updateState({ phase: "PROCESS_RESULTS" });
-      const finalResults = aggregateResults({
-        ping: this.state.ping,
-        jitter: this.state.jitter,
-        download: this.state.download,
-        upload: this.state.upload,
-      });
-
-      // 6. COMPLETED
-      this.updateState({
-        phase: "COMPLETED",
-        results: finalResults,
-      });
-
-      this.isRunning = false;
-      this.abortController = null;
-      return finalResults;
+      const errorMessage = lastFailure?.message || "Speed test failed against all test servers";
+      this.updateState({ phase: "ERROR", error: errorMessage });
+      throw lastFailure ?? new Error(errorMessage);
     } catch (err: unknown) {
       this.isRunning = false;
       this.abortController = null;

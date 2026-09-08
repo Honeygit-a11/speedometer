@@ -1,37 +1,77 @@
-import { SpeedMetrics } from "@/types";
+import {
+  SpeedMetrics,
+  RawTransferMetrics,
+  RawMeasurementSample,
+} from "@/types";
 import {
   calculateSpeedMbps,
   calculateEMA,
   RollingThroughputTracker,
+  isThroughputStable,
 } from "./calculations";
+import {
+  buildDownloadUrl,
+  buildPingUrl,
+  detectServerBackend,
+  type ServerBackend,
+} from "./server-endpoints";
+import type { SpeedTestServer } from "./server-registry";
 
 export interface DownloadTestOptions {
   workerUrl: string;
-  durationMs?: number;       // Total duration (default 8000ms)
-  warmupMs?: number;         // Initial warm-up window to discard (default 1500ms)
-  initialStreams?: number;   // Initial parallel streams (default 2)
-  maxStreams?: number;       // Maximum parallel streams (default 6)
+  backend?: ServerBackend;
+  server?: SpeedTestServer;
+  /** Hard cap on total test duration (default 8000ms). */
+  maxDurationMs?: number;
+  /** Minimum duration before early termination is allowed (default 4000ms). */
+  minDurationMs?: number;
+  /** Connection ramp-up window to discard (default 1500ms). */
+  warmupMs?: number;
+  initialStreams?: number;
+  maxStreams?: number;
+  /** CV threshold (0-1) below which throughput is considered stable. */
+  stabilityThreshold?: number;
+  /** How long throughput must remain stable to end early (default 1500ms). */
+  stableDurationMs?: number;
+  /** Minimum samples before early termination is considered. */
+  minSampleCount?: number;
   signal?: AbortSignal;
   onProgress?: (metrics: { currentMbps: number; bytesTransferred: number; elapsedMs: number; progress: number }) => void;
 }
 
 /**
- * Progressive multi-connection download speed measurement.
- * Uses a rolling 1000ms window for smooth live readout and cumulative post-warmup
- * throughput calculation for exact, reliable final results.
+ * Progressive multi-connection download measurement.
+ *
+ * Accuracy rules (per the measurement plan):
+ *  - Final result = actual post-warmup bytes / actual post-warmup duration.
+ *    The smoothed `currentMbps` shown on the gauge is NEVER used as a result.
+ *  - Connection startup (warmup) is discarded, so slow-start doesn't bias speed.
+ *  - Stream concurrency is ramped up DURING WARMUP ONLY and then frozen, so a
+ *    mid-measurement scaling transient can't distort the post-warmup average.
+ *  - Adaptive duration: ends early once throughput is stable (after a minimum
+ *    duration), and never exceeds the hard cap.
+ *  - No fabricated fallback: if zero bytes transferred post-warmup, final is 0.
  */
 export async function runDownloadTest(options: DownloadTestOptions): Promise<SpeedMetrics> {
   const {
     workerUrl,
-    durationMs = 8000,
+    backend: backendOverride,
+    server,
+    maxDurationMs = 8000,
+    minDurationMs = 4000,
     warmupMs = 1500,
     initialStreams = 2,
-    maxStreams = 6,
+    maxStreams = 8,
+    stabilityThreshold = 0.25,
+    stableDurationMs = 1500,
+    minSampleCount = 12,
     signal,
     onProgress,
   } = options;
 
-  const downloadUrl = `${workerUrl.replace(/\/$/, "")}/download`;
+  const backend =
+    backendOverride ?? (server ? detectServerBackend(server) : "standard");
+
   const internalController = new AbortController();
 
   const onExternalAbort = () => internalController.abort();
@@ -41,10 +81,11 @@ export async function runDownloadTest(options: DownloadTestOptions): Promise<Spe
   let totalBytesTransferred = 0;
   let currentSmoothedMbps = 0;
   const postWarmupMbpsSamples: number[] = [];
+  const rawSamples: RawMeasurementSample[] = [];
   const loadedLatencySamples: number[] = [];
   let lastProbeTime = 0;
 
-  // Track warmup transition
+  // Warmup transition tracking.
   let warmupPassed = false;
   let bytesAtWarmupEnd = 0;
   let warmupEndTime = startTime + warmupMs;
@@ -53,24 +94,27 @@ export async function runDownloadTest(options: DownloadTestOptions): Promise<Spe
 
   let activeStreams = 0;
   let targetStreams = initialStreams;
+  let streamFailures = 0;
 
-  // Stream worker
+  // Stream worker: each maintains a keep-alive connection across sequential
+  // large chunk requests, so connection setup is confined to warmup.
   async function streamWorker(streamId: number) {
     activeStreams++;
     try {
       while (!internalController.signal.aborted) {
-        const remainingTime = durationMs - (performance.now() - startTime);
+        const remainingTime = maxDurationMs - (performance.now() - startTime);
         if (remainingTime <= 0) break;
 
-        // Request 32MB chunks: large enough to amortize connection/RTT overhead
-        // between sequential requests so fast lines stay saturated.
         const chunkSize = 32 * 1024 * 1024;
-        const res = await fetch(`${downloadUrl}?bytes=${chunkSize}&s=${streamId}&_t=${Date.now()}`, {
-          cache: "no-store",
-          signal: internalController.signal,
-        });
+        const res = await fetch(
+          buildDownloadUrl(workerUrl, backend, chunkSize, streamId),
+          { cache: "no-store", signal: internalController.signal }
+        );
 
-        if (!res.ok || !res.body) break;
+        if (!res.ok || !res.body) {
+          streamFailures++;
+          break;
+        }
 
         const reader = res.body.getReader();
         try {
@@ -87,38 +131,38 @@ export async function runDownloadTest(options: DownloadTestOptions): Promise<Spe
       }
     } catch (err: unknown) {
       if ((err as Error)?.name !== "AbortError") {
-        console.warn(`[SpeedTest Engine] Download stream #${streamId} encountered error:`, err);
+        streamFailures++;
+        console.warn(`[SpeedTest Engine] Download stream #${streamId} error:`, err);
       }
     } finally {
       activeStreams--;
     }
   }
 
-  // Concurrent loaded latency probe runner
+  // Concurrent loaded-latency probe under load.
   async function probeLoadedLatency() {
-    const pingUrl = `${workerUrl.replace(/\/$/, "")}/ping?_loaded=1&_t=${Date.now()}`;
+    const pingUrl = buildPingUrl(workerUrl, backend, "?_loaded=1");
     const t0 = performance.now();
     try {
-      const res = await fetch(pingUrl, {
+      const res = await fetch(`${pingUrl}&_t=${Date.now()}`, {
         cache: "no-store",
         signal: internalController.signal,
       });
       if (res.ok) {
         await res.text();
-        const latency = performance.now() - t0;
-        loadedLatencySamples.push(latency);
+        loadedLatencySamples.push(performance.now() - t0);
       }
     } catch {
-      // Ignore probe aborts
+      // Ignore probe aborts / transient failures.
     }
   }
 
-  // Launch initial parallel streams
   for (let i = 0; i < targetStreams; i++) {
     streamWorker(i);
   }
 
-  // Measurement and sampling ticker (every 100ms)
+  let stableSince = 0;
+
   await new Promise<void>((resolve, reject) => {
     const interval = setInterval(() => {
       if (internalController.signal.aborted) {
@@ -130,46 +174,69 @@ export async function runDownloadTest(options: DownloadTestOptions): Promise<Spe
       const now = performance.now();
       const elapsedTotalMs = now - startTime;
 
-      // Feed rolling tracker
       rollingTracker.record(now, totalBytesTransferred);
       const rollingMbps = rollingTracker.getCurrentMbps();
 
-      // Check warmup boundary
+      // Warmup boundary.
       if (!warmupPassed && elapsedTotalMs >= warmupMs) {
         warmupPassed = true;
         bytesAtWarmupEnd = totalBytesTransferred;
         warmupEndTime = now;
       }
 
-      // Smooth the display speed; decay toward 0 during stalls so the gauge
-      // doesn't freeze at a stale high value while the link is idle.
+      // Smooth display value (UI only — never used for the final result).
       if (rollingMbps > 0) {
         currentSmoothedMbps = calculateEMA(rollingMbps, currentSmoothedMbps, 0.4);
       } else {
         currentSmoothedMbps = calculateEMA(0, currentSmoothedMbps, 0.2);
       }
 
-      // Post-warmup sampling and stream scaling
-      if (warmupPassed && rollingMbps > 0) {
+      if (warmupPassed) {
         postWarmupMbpsSamples.push(rollingMbps);
 
-        // Periodically probe loaded latency every 1500ms
+        // Record a raw measurement sample (authoritative layer).
+        rawSamples.push({
+          timestampMs: Math.round(now),
+          cumulativeBytes: totalBytesTransferred,
+          throughputMbps: Number(rollingMbps.toFixed(2)),
+          streamCount: targetStreams,
+        });
+
+        // Periodically probe loaded latency (~every 1500ms).
         if (now - lastProbeTime > 1500) {
           lastProbeTime = now;
           probeLoadedLatency();
         }
 
-        // Dynamically scale concurrency if bandwidth justifies it
+        // Adaptive early termination: only after min duration + enough samples,
+        // and only when throughput has been stable for the required window.
+        if (
+          elapsedTotalMs >= minDurationMs &&
+          postWarmupMbpsSamples.length >= minSampleCount
+        ) {
+          if (isThroughputStable(postWarmupMbpsSamples, stabilityThreshold)) {
+            if (stableSince === 0) stableSince = now;
+            else if (now - stableSince >= stableDurationMs) {
+              clearInterval(interval);
+              internalController.abort();
+              resolve();
+              return;
+            }
+          } else {
+            stableSince = 0;
+          }
+        }
+      } else {
+        // Warmup phase: ramp concurrency up to fit the link. Frozen post-warmup
+        // so the measurement window has a single, stable concurrency level.
         if (rollingMbps > 40 && targetStreams < 4) {
-          const newStreamId = targetStreams++;
-          streamWorker(newStreamId);
+          streamWorker(targetStreams++);
         } else if (rollingMbps > 150 && targetStreams < maxStreams) {
-          const newStreamId = targetStreams++;
-          streamWorker(newStreamId);
+          streamWorker(targetStreams++);
         }
       }
 
-      const progress = Math.min(1, elapsedTotalMs / durationMs);
+      const progress = Math.min(1, elapsedTotalMs / maxDurationMs);
 
       if (onProgress) {
         onProgress({
@@ -180,9 +247,9 @@ export async function runDownloadTest(options: DownloadTestOptions): Promise<Spe
         });
       }
 
-      if (elapsedTotalMs >= durationMs) {
+      if (elapsedTotalMs >= maxDurationMs) {
         clearInterval(interval);
-        internalController.abort(); // Terminate remaining active streams
+        internalController.abort();
         resolve();
       }
     }, 100);
@@ -194,30 +261,38 @@ export async function runDownloadTest(options: DownloadTestOptions): Promise<Spe
 
   signal?.removeEventListener("abort", onExternalAbort);
 
-  // Compute final stable speed from ground truth post-warmup bytes and duration
+  // Final ground-truth result from the post-warmup window. No fabrication: if
+  // zero bytes transferred, the result is 0 — never a smoothed display value.
   const finalTime = performance.now();
   const postWarmupBytes = Math.max(0, totalBytesTransferred - bytesAtWarmupEnd);
   const postWarmupDurationSec = Math.max(0.1, (finalTime - warmupEndTime) / 1000);
+  const finalMbps =
+    postWarmupBytes > 0
+      ? Number(calculateSpeedMbps(postWarmupBytes, postWarmupDurationSec).toFixed(1))
+      : 0;
 
-  // Final speed = exact ground-truth bytes/duration over the post-warmup window.
-  // No trimmed-mean blend: the trimmed mean drops the slow tail that a sustained
-  // average must include, biasing results upward on variable links.
-  const cumulativeThroughput = calculateSpeedMbps(postWarmupBytes, postWarmupDurationSec);
-  const finalMbps = cumulativeThroughput > 0
-    ? Number(cumulativeThroughput.toFixed(1))
-    : currentSmoothedMbps;
+  const avgLoadedLatency =
+    loadedLatencySamples.length > 0
+      ? Math.round(loadedLatencySamples.reduce((a, b) => a + b, 0) / loadedLatencySamples.length)
+      : undefined;
 
-  // Compute average loaded latency
-  const avgLoadedLatency = loadedLatencySamples.length > 0
-    ? Math.round(loadedLatencySamples.reduce((a, b) => a + b, 0) / loadedLatencySamples.length)
-    : undefined;
+  const raw: RawTransferMetrics = {
+    samples: rawSamples,
+    totalBytes: totalBytesTransferred,
+    measurementStartMs: Math.round(warmupEndTime),
+    measurementEndMs: Math.round(finalTime),
+    measurementDurationMs: Math.round(finalTime - warmupEndTime),
+    streamCount: targetStreams,
+  };
 
   return {
-    currentMbps: finalMbps,
+    currentMbps: currentSmoothedMbps,
     bytesTransferred: totalBytesTransferred,
     elapsedMs: Math.round(performance.now() - startTime),
     finalMbps,
     loadedLatencyMs: avgLoadedLatency,
     samples: postWarmupMbpsSamples,
+    streamCount: targetStreams,
+    raw,
   };
 }
