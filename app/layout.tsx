@@ -22,6 +22,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
+      <head>
+        <script
+          async
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8518009178365659"
+          crossOrigin="anonymous"
+        />
+      </head>
       <body className="flex flex-col min-h-screen antialiased selection:bg-cyan-500/30 selection:text-cyan-200">
         <Header />
         <main className="flex-1 flex flex-col">{children}</main>
