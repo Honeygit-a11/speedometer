@@ -9,10 +9,54 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "SpeedPulse — Accurate Internet Speed Test",
-  description: "Test your internet download speed, upload speed, latency, and jitter directly from your browser with edge performance.",
-  keywords: ["speed test", "internet speed", "bandwidth test", "ping test", "jitter", "fast speed test"],
-  authors: [{ name: "SpeedPulse" }],
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "https://speedpulse.app"),
+  title: {
+    default: "SpeedPulse — Accurate Internet Speed Test, Latency & Jitter",
+    template: "%s | SpeedPulse",
+  },
+  description:
+    "Free, independent, high-precision internet speed test. Measure download, upload, ping latency, RFC 3550 jitter, and bufferbloat directly from your browser with zero data retention.",
+  keywords: [
+    "speed test",
+    "internet speed test",
+    "bandwidth test",
+    "ping test",
+    "jitter test",
+    "bufferbloat test",
+    "wifi speed test",
+    "download speed",
+    "upload speed",
+    "fast speed test",
+  ],
+  authors: [{ name: "SpeedPulse Diagnostics" }],
+  creator: "SpeedPulse",
+  publisher: "SpeedPulse",
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-video-preview": -1,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+    },
+  },
+  openGraph: {
+    type: "website",
+    locale: "en_US",
+    url: "https://speedpulse.app",
+    title: "SpeedPulse — Accurate Internet Speed Test, Latency & Jitter",
+    description:
+      "Measure your real download, upload, ping, and bufferbloat directly from your browser to Cloudflare edge nodes.",
+    siteName: "SpeedPulse",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "SpeedPulse — Accurate Internet Speed Test",
+    description:
+      "Measure your real download, upload, ping, and bufferbloat directly from your browser to Cloudflare edge nodes.",
+  },
 };
 
 export default function RootLayout({
